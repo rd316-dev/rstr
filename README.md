@@ -1,4 +1,4 @@
-![rstr](assets/logo.svg)
+![rstr](assets/logo.png)
 
 Overview
 -
