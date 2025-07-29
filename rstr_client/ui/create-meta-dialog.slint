@@ -3,7 +3,7 @@ import { LineEdit, StandardButton, ListView } from "std-widgets.slint";
 import { FlatButton } from "common.slint";
 export component CreateMetaDialog inherits Dialog {
     title: "Create Metadata";
-    icon: @image-url("img/favicon2.ico");
+    icon: @image-url("img/favicon.ico");
 
     //in-out property <string> local_path;
     //in-out property <string> remote_path;
@@ -119,7 +119,7 @@ export component CreateMetaDialog inherits Dialog {
 
 export component CreateMetaMultipleDialog inherits Dialog {
     title: "Create Metadata";
-    icon: @image-url("img/favicon2.ico");
+    icon: @image-url("img/favicon.ico");
 
     in-out property <[string]> local_paths : ["dsdsa", "sdadsa"];
     out property <string> remote_dir : remote_edit.text;
