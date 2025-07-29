@@ -1,0 +1,27 @@
+[package]
+name = "rstr_client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rstr_core = {path="../rstr_core"}
+size = "0.5.0"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+tokio-tungstenite = { version = "0.27.0", features = ["native-tls"] }
+tokio = { version = "1.45.1", features = ["io-util", "rt", "net", "macros", "rt-multi-thread", "time"]}
+tokio-util = "0.7.15"
+futures = "0.3.31"
+rfd = "0.15.3"
+bincode = "=2.0.1"
+lexical-sort = "0.3.1"
+bytes = "1.10.1"
+slint = { version = "1.12", features = ["renderer-skia", "image-default-formats"] }
+
+[target.'cfg(windows)'.dependencies]
+rstr_projfs = {path="../rstr_projfs"}
+
+[build-dependencies]
+slint-build = "1.12"
+
+[target.'cfg(windows)'.build-dependencies]
+windres = "0.2.2"
