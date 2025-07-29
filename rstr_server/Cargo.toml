@@ -1,0 +1,18 @@
+[package]
+name = "rstr_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rstr_core = {path="../rstr_core"}
+tokio-tungstenite = "0.27.0"
+tokio = { version = "1.45.1", features = ["io-util", "rt", "net", "macros", "rt-multi-thread"]}
+tokio-util = "0.7.15"
+futures = "0.3.31"
+bincode = "=2.0.1"
+bytes = "1.10.1"
+log = "0.4.27"
+simple_logger = { version = "5.0.0", features = ["colors"] }
+
+[target.'cfg(unix)'.dependencies]
+systemd-journal-logger = "2.2.2"
