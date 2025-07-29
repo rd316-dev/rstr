@@ -1,5 +1,6 @@
 target/*
 Cargo.lock
+*.png~
 rstr_client/target/
 rstr_client/receiver/
 rstr_client/sender/
