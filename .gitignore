@@ -1,0 +1,8 @@
+target/*
+Cargo.lock
+rstr_client/target/
+rstr_client/receiver/
+rstr_client/sender/
+rstr_core/target/
+rstr_projfs/target/
+rstr_server/target/
