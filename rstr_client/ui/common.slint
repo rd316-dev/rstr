@@ -1,0 +1,192 @@
+import { HorizontalBox, Spinner } from "std-widgets.slint";
+
+export component FlatButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <color> colorize;
+    in property <color> hover-colorize: colorize;
+    in property <color> pressed-colorize: hover-colorize;
+    in property <color> disabled-colorize : #e7e7e7;
+    in property <length> icon-width;
+    in property <bool> enabled: true;
+
+    in property <LayoutAlignment> alignment;
+
+    in property <length> override-padding-top : 0px;
+    in property <length> override-padding-bottom : 0px;
+    in property <length> override-padding-left : 10px;
+    in property <length> override-padding-right : 10px;
+
+    in property <bool> lighten-background : true;
+
+    in property <duration> animation-duration: 75ms;
+
+    out property <bool> has-hover: ta.has-hover;
+
+    callback clicked();
+
+    animate background {
+        duration: animation-duration;
+        //easing: ease-out-bounce;
+    }
+
+    ta := TouchArea {
+        enabled: enabled;
+
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding: 0;
+        spacing: 5px;
+        padding-top: override-padding-top;
+        padding-bottom: override-padding-bottom;
+        padding-left: override-padding-left;
+        padding-right: override-padding-right;
+
+        alignment: alignment;
+
+        if icon.width > 0: Image {
+            source: icon;
+            colorize: enabled 
+                ? ta.has-hover
+                    ? ta.pressed
+                        ? pressed-colorize
+                        : hover-colorize
+                    : colorize
+                : disabled-colorize;
+            width: icon-width;
+            vertical-stretch: 1;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+
+            animate colorize {
+                 duration: animation-duration;
+            }
+        }
+
+        if !text.is-empty: Text {
+            text: text;
+            vertical-alignment: center;
+            horizontal-alignment: TextHorizontalAlignment.left;
+            horizontal-stretch: 1;
+            color: enabled ? #ffffff : #ffffff80;
+        }
+
+        @children
+    }
+
+    states [
+        active when ta.has-hover && !ta.pressed: {
+            root.background: lighten-background ? #ffffff1f : #ffffff00;
+        }
+        active when ta.pressed: {
+            root.background: lighten-background ? #ffffff0f : #ffffff00;
+        }
+    ]
+}
+
+export enum ConnectionStatus {
+    Connecting,
+    Connected,
+    Disconnected
+}
+
+export component ServerConnectionStatus inherits Rectangle {
+    in property <ConnectionStatus> status: ConnectionStatus.Disconnected;
+
+    min-height: 32px;
+    //min-width: 120px;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        spacing: 6px;
+        alignment: LayoutAlignment.start;
+        height: 14px;
+
+        Image {
+            source: 
+                status == ConnectionStatus.Connected ? @image-url("img/status-green.png") :
+                status == ConnectionStatus.Connecting ? @image-url("img/status-orange.png") :
+                @image-url("img/status-red.png");
+            width: 12px;
+            vertical-alignment: ImageVerticalAlignment.bottom;
+            /*colorize: 
+                status == ConnectionStatus.Connected ? #00ff00 :
+                status == ConnectionStatus.Connecting ? #ff8800 :
+                #ff0000;*/
+        }
+        Text {
+            text: 
+                status == ConnectionStatus.Connected ? "Connected" :
+                status == ConnectionStatus.Connecting ? "Connecting" :
+                "Disconnected";
+
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            color:
+                status == ConnectionStatus.Connected ? #7cff7c :
+                status == ConnectionStatus.Connecting ? #ffae00 :
+                #e93629;
+            font-weight: 700;
+
+            animate color {
+                 duration: 50ms;
+            }
+        }
+
+        if status == ConnectionStatus.Connecting: Spinner{
+            indeterminate: true;
+            width: 16px;
+            vertical-stretch: 1;
+        }
+    }
+}
+
+export component HorizontalSplit inherits Rectangle {
+
+    in property <float> default-ratio: 0.5;
+
+    property <length> splitter-width: 1px;
+    property <length> position: self.width * default-ratio;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+
+        width: position - (splitter-width / 2);
+        background: #ff0000;
+        padding: 0;
+    }
+    
+    Rectangle {
+        x: position - (splitter-width / 2);
+        width: splitter-width;
+
+        background: #ffffff;
+    }
+
+    Rectangle {
+        x: position + (splitter-width / 2);
+        y: 0;
+
+        background: #0000ff;
+    }
+
+    TouchArea {
+        x: position - (10px / 2);
+        width: 10px;
+
+        moved() => {
+            position = self.pressed ? max(50px, min(root.width - 50px, position + (self.mouse-x - splitter-width))) : position;
+        }
+
+        states [
+            active when self.has-hover: {
+                mouse-cursor: ew-resize;
+            }
+        ]
+    }
+}

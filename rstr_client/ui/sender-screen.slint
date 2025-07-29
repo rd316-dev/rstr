@@ -1,0 +1,341 @@
+import { Button, ListView, ProgressIndicator, Spinner } from "std-widgets.slint";
+import { FlatButton } from "common.slint";
+import { CreateMetaDialog } from "create-meta-dialog.slint";
+
+import { Directory, SenderFile, MetaFile } from "model.slint";
+
+export component SenderScreen inherits Window {
+    in property <[Directory]> directories;
+    in property <[SenderFile]> files;
+    in-out property <string> current_dir: "/";
+
+    property <[MetaFile]> queued_metafiles;// : [{name: "Test file", formatted-size: "54 MiB"}, {name: "Test file 2", formatted-size: "2 MiB"}];
+    property <int> metafile_index : -1;
+
+    property <MetaFile> creating_metafile;// : {name: "Test file", formatted-size: "54 MiB"};
+    property <float> creating_meta_progress;
+
+    property <int> percentage: creating_meta_progress * 100;
+
+    property <string> metadata_creation_error;
+
+    callback upload_clicked();
+    callback upload_multiple_clicked();
+    callback directory_changed(dir: string);
+
+    public function set_metadata_creation_error(error: string) {
+        metadata_creation_error = error;
+        creating_meta_progress = 0.0;
+        creating_metafile = {};
+    }
+
+    public function metadata_creation_started(file: MetaFile) {
+        creating_metafile = file;
+        creating_meta_progress = 0.0;
+    }
+
+    public function multiple_metadata_creation_started(files: [MetaFile]) {
+        queued_metafiles = files;
+        metafile_index = 0;
+        creating_metafile = files[0];
+        creating_meta_progress = 0.0;
+    }
+
+    public function metadata_created() {
+        creating_meta_progress = 0.0;
+        if metafile_index < queued_metafiles.length {
+            metafile_index += 1;
+            creating_metafile = queued_metafiles[metafile_index];
+        } else {
+            metafile_index = -1;
+            creating_metafile = {};
+            queued_metafiles = [];
+        }
+    }
+
+    public function set_progress(progress: float) {
+        creating_meta_progress = progress;
+    }
+
+    preferred-width: 600px;
+    preferred-height: 400px;
+
+    VerticalLayout {
+        padding: 0;
+        spacing: 0;
+
+        Rectangle {
+            property <float> default-ratio: 0.3;
+
+            property <length> splitter-width: 0px;
+            property <length> position: max(self.width * default-ratio, 220px);
+
+            background: #252525;
+
+            Rectangle {
+                x: 0;
+                width: position - (splitter-width / 2);
+                padding: 0;
+
+                background: #1f1f1f;
+                border-color: #292929;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 10px;
+                    Text {
+                        text: "Directories";
+                        font-size: 12pt;
+                    }
+
+                    ListView {
+                        for dir in directories: FlatButton {
+                            padding: 5px;
+                            text: dir.display-name;
+                            icon: @image-url("img/folder-icon.png");
+                            colorize: #ffffff;
+                            icon-width: 16px;
+
+                            clicked => {
+                                current_dir = dir.display-name;
+                                directory_changed(dir.actual-name);
+                            }
+                        }
+                    }
+
+                    if creating_metafile.name.is-empty && metadata_creation_error.is-empty: VerticalLayout {
+                        spacing: 10px;
+
+                        Button {
+                            text: "Upload";
+                            primary: true;
+
+                            clicked => {
+                                upload_clicked();
+                            }
+                        }
+
+                        Button {
+                            text: "Upload Multiple";
+                            primary: false;
+
+                            clicked => {
+                                upload_multiple_clicked();
+                            }
+                        }
+                    }
+
+                    if !creating_metafile.name.is-empty && metadata_creation_error.is-empty: Rectangle {
+                        background: #007e4e;
+                        border-radius: 5px;
+                        clip: true;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+
+                            /*Image {
+                                source: @image-url("img/file-black-icon.png");
+                                colorize: #ffffff;
+                                width: 32px;
+                            }*/
+                            
+                            Rectangle {
+                                width: 32px;
+
+                                Spinner {
+                                    indeterminate: creating_meta_progress <= 0 || creating_meta_progress >= 1.0;
+                                    progress: creating_meta_progress;
+
+                                    animate progress {
+                                        duration: 200ms;        
+                                    }
+                                }
+
+                                Text {
+                                    text: percentage + "%";
+                                    font-size: 7pt;
+                                }
+                            }
+
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                spacing: 2px;
+
+                                Text {
+                                    text: "Generating metadata" + 
+                                        (queued_metafiles.length > 0
+                                        ? (" (" + (metafile_index + 1) + "/" + queued_metafiles.length + ")")
+                                        : "...");
+                                }
+                                Text {
+                                    text: creating_metafile.name;
+                                    font-size: 10pt;
+                                    font-weight: 600;
+
+                                    wrap: TextWrap.word-wrap;
+                                    overflow: TextOverflow.clip;
+                                }
+                                Text {
+                                    text: "Size: " + creating_metafile.formatted-size;
+                                }
+                            }
+                        }
+
+                        states [
+                            hidden when !creating_metafile.name.is-empty : {
+                                out {
+                                    animate * {
+                                        duration: 800ms;
+                                    }
+                                }
+                            }
+                        ]
+                    }
+
+                    if !metadata_creation_error.is-empty: Rectangle {
+                        background: #912626;
+                        border-radius: 5px;
+                        clip: true;
+
+                        HorizontalLayout {
+
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                spacing: 2px;
+
+                                HorizontalLayout {
+                                    Text {
+                                        text: "Meta creation error";
+                                    }
+
+                                    FlatButton {
+                                        icon: @image-url("img/close-icon.png");
+                                        colorize: #ffffffa2;
+                                        icon-width: 8px;
+
+                                        width: 12px;
+
+                                        override-padding-left: 2px;
+                                        override-padding-right: 2px;
+
+                                        clicked => {
+                                            metadata_creation_error = "";
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: metadata_creation_error;
+                                    font-size: 10pt;
+                                    font-weight: 600;
+
+                                    wrap: TextWrap.word-wrap;
+                                    overflow: TextOverflow.clip;
+                                }
+                            }
+                        }
+
+                        states [
+                            hidden when !creating_metafile.name.is-empty : {
+                                out {
+                                    animate * {
+                                        duration: 800ms;
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+
+            VerticalLayout {
+                x: position + (splitter-width / 2);
+                width: parent.width - position + (splitter-width / 2);
+
+                Rectangle {
+                    background: #1f1f1f;
+                    border-color: #292929;
+                    border-width: 1px;
+                    //width: parent.width;
+                    
+                    Text {
+                        text: current_dir;
+                        font-size: 12pt;
+                    }
+                }
+
+                ListView {
+                    vertical-stretch: 1;
+
+                    for file in files: row:= FlatButton {
+                        icon: @image-url("img/file-black-icon.png");
+                        icon-width: 16px;
+                        colorize: #ffffff;
+
+                        /*if file.status == SenderFileStatus.MetaCreating: Spinner {
+                            progress: file.meta_creation_progress;
+                        }*/
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            padding-top: 5px;
+                            padding-bottom: 5px;
+
+                            Text {
+                                text: file.name;
+                                font-size: 12pt;
+
+                                horizontal-alignment: TextHorizontalAlignment.left;
+                                vertical-alignment: TextVerticalAlignment.center;
+
+                                wrap: TextWrap.word-wrap;
+                                overflow: TextOverflow.clip;
+                            }
+
+                            Text {
+                                text: "Size: " + file.formatted-size;
+                            }
+                        }
+
+                        /*if row.has-hover && file.status == SenderFileStatus.MetaCreated: FlatButton {
+                            vertical-stretch: 1;
+                            icon: @image-url("img/minus-square-icon.png");
+                            colorize: #858585;
+                            icon-width: 24px;
+                        }*/
+                    }
+                }
+            }
+
+            splitter := Rectangle {
+                x: ta.has-hover ? position - (splitter-width / 2) - 1px : position - (splitter-width / 2);
+                width: ta.has-hover ? splitter-width + 2px : splitter-width;
+
+                background: #9b9b9b;
+
+                animate background, width {
+                     duration: 50ms;
+                }
+            }
+
+            ta := TouchArea {
+                x: position - (10px / 2);
+                width: 10px;
+
+                moved() => {
+                    position = self.pressed ? max(220px, min(root.width - 300px, position + (self.mouse-x - splitter-width))) : position;
+                }
+
+                states [
+                    active when self.has-hover: {
+                        mouse-cursor: ew-resize;
+                    }
+                ]
+            }
+        }
+    }
+}

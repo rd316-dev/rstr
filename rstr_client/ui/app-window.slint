@@ -1,0 +1,290 @@
+import { Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { MainScreen } from "main-screen.slint";
+import { SenderScreen } from "sender-screen.slint";
+import { ServerConnectionStatus, ConnectionStatus, FlatButton } from "common.slint";
+import { ReceiverScreen } from "receiver-screen.slint";
+import { CreateMetaDialog, CreateMetaMultipleDialog } from "create-meta-dialog.slint";
+
+import { Directory, SenderFile, ReceiverFile, ReceiverFileStatus, CurrentSenderDirectory, MetaFile, DownloadingFile, TransferingFile } from "model.slint";
+
+export enum Screen {
+    MainScreen,
+    ReceiverScreen,
+    SenderScreen
+}
+
+export { CreateMetaDialog, CreateMetaMultipleDialog, Directory, SenderFile, ReceiverFile, ReceiverFileStatus, MetaFile, TransferingFile }
+
+export component AppWindow inherits Window {
+    in property <string> version: "v0.0.0";
+
+    in property <ConnectionStatus> connection_status: ConnectionStatus.Disconnected;
+    in property <string> current_dir;
+
+    in property <bool> sender_connected;
+
+    property <string> author_name: "rd316";
+    property <Screen> current_screen: Screen.MainScreen;
+    
+    property <[Directory]> directories;
+    property <[SenderFile]> sender_files;
+    property <[ReceiverFile]> receiver_files;
+
+    property <string> state-message: "rstr";
+
+    callback pressed_sender();
+    callback pressed_receiver();
+
+    callback upload_clicked();
+    callback upload_multiple_clicked();
+
+    callback author_clicked();
+
+    callback sender_dir_changed(dir: string);
+    callback receiver_dir_changed(dir: string);
+
+    callback download(remote_path: string, remote_name: string);
+    callback resume(remote_path: string);
+    callback stop_downloading();
+
+    public function open_receiver() {
+        current_screen = Screen.ReceiverScreen;
+        state-message = "Receiver";
+    }
+
+    public function open_sender() {
+        current_screen = Screen.SenderScreen;
+        state-message = "Sender";
+    }
+
+    public function set_directories(dirs: [Directory]) {
+        directories = dirs;
+    }
+
+    public function set_receiver_files(files: [ReceiverFile]) {
+        receiver_files = files;
+    }
+
+    public function set_sender_files(files: [SenderFile]) {
+        sender_files = files;
+    }
+
+    public function set_metadata_creation_error(error: string) {
+        sender.set_metadata_creation_error(error);
+    }
+
+    public function metadata_creation_started(file: MetaFile) {
+        sender.metadata_creation_started(file);
+    }
+
+    public function multiple_metadata_creation_started(files: [MetaFile]) {
+        sender.multiple_metadata_creation_started(files);
+    }
+
+    public function metadata_created() {
+        sender.metadata_created();
+    }
+
+    public function sender_set_progress(progress: float) {
+        sender.set_progress(progress);
+    }
+
+    public function set_downloading_file(file: DownloadingFile) {
+        receiver.set_downloading_file(file);
+    }
+
+    public function set_downloading_progress(progress: float) {
+        receiver.set_progress(progress);
+    }
+
+    no-frame: false;
+    min-width: 600px;
+    min-height: 400px;
+    title: "rstr";
+    icon: @image-url("img/icon-32.png");
+
+    VerticalLayout {
+        padding: 0;
+        spacing: 0;
+
+        screen_root := Rectangle {
+            MainScreen {
+                width: screen_root.width;
+                height: screen_root.height;
+
+                status: connection_status;
+                vertical-stretch: 1;
+
+                visible: current_screen == Screen.MainScreen;
+
+                receiver_clicked => {
+                    pressed_receiver();
+                }
+
+                sender_clicked => {
+                    pressed_sender();
+                }
+            }
+
+            sender := SenderScreen {
+                width: screen_root.width;
+                height: screen_root.height;
+
+                vertical-stretch: 1;
+                directories: directories;
+                files: sender_files;
+                current_dir: current_dir;
+                
+                visible: current_screen == Screen.SenderScreen;
+
+                upload_clicked => {
+                    root.upload_clicked();
+                }
+
+                upload_multiple_clicked => {
+                    root.upload_multiple_clicked();
+                }
+
+                directory_changed(dir) => {
+                    root.sender_dir_changed(dir);
+                }
+            }
+
+            receiver := ReceiverScreen {
+                width: screen_root.width;
+                height: screen_root.height;
+
+                vertical-stretch: 1;
+
+                directories: directories;
+                files: receiver_files;
+                current_dir: current_dir;
+
+                visible: current_screen == Screen.ReceiverScreen;
+                //downloading_total_size: downloading_total_size;
+                //downloading_total_downloaded: downloading_total_downloaded;
+                
+                sender_connected: sender_connected;
+
+                directory_changed(dir) => {
+                    root.receiver_dir_changed(dir);
+                }
+
+                download(remote-path, remote-name) => {
+                    download(remote-path, remote-name);
+                }
+
+                resume(remote-path) => {
+                    resume(remote-path);
+                }
+
+                stop_downloading() => {
+                    stop_downloading();
+                }
+            }
+        }
+
+        Rectangle {
+            background: #1f1f1f;
+            border-color: #292929;
+            border-width: 1px;
+
+            padding: 0;
+            vertical-stretch: 0;
+            height: 26px;
+
+            HorizontalLayout {
+                padding: 0;
+
+                HorizontalLayout {
+                    width: 200px;
+
+                    ServerConnectionStatus {
+                        status: connection_status;
+                    }
+                }
+
+                HorizontalLayout {
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    HorizontalLayout {
+                        horizontal-stretch: 0;
+                        Rectangle {
+                            width: 28px;
+                        }
+
+                        Text {
+                            text: state-message;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-weight: 700;
+                            font-size: 10pt;
+                        }
+
+                        Rectangle {
+                            width: 4px;
+                        }
+
+                        FlatButton {
+                            icon: @image-url("img/settings.svg");
+                            icon-width: 16px;
+                            colorize: #00a8b4;
+                            hover-colorize: #54f4ff;
+                            pressed-colorize: #1f7980;
+
+                            lighten-background: false;
+
+                            override-padding-left: 4px;
+                            override-padding-right: 4px;
+
+                            animation-duration: 34ms;
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                HorizontalLayout {
+                    width: 200px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: version;
+                        vertical-alignment: center;
+                        color: #ffffff8b;
+                    }
+
+                    Rectangle {
+                        width: 5px;
+                    }
+
+                    FlatButton {
+                        icon: @image-url("img/github-mark-white.svg");
+                        icon-width: 16px;
+                        alignment: end;
+                        horizontal-stretch: 0;
+
+                        clicked => {
+                            author_clicked();
+                        }
+
+                        Text {
+                            text: author_name;
+                            font-size: 10pt;
+                            font-weight: 700;
+                            color: #aaaaaa;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

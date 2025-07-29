@@ -1,0 +1,362 @@
+import { Button, ListView, Spinner } from "std-widgets.slint";
+import { FlatButton } from "common.slint";
+
+import { Directory, ReceiverFileStatus, ReceiverFile, DownloadingFile } from "model.slint";
+
+export enum ReceiverState {
+    Idle,
+    ReceivingMetadata,
+    ReceivingFile
+}
+
+export component ReceiverScreen inherits Window {
+    in property <ReceiverState> state;
+
+    in property <[Directory]> directories : [{display-name: "/", actual-name: ""}];
+    in property <[ReceiverFile]> files : [
+        {name: "Video file.mkv", formatted-size: "450 MiB", status: ReceiverFileStatus.NotDownloaded}, 
+        {name: "text file.txt", formatted-size: "20 KiB", status: ReceiverFileStatus.Downloading},
+        {name: "text file.txt", formatted-size: "20 KiB", remote-path: "sd", status: ReceiverFileStatus.Downloading},
+        {name: "random file", formatted-size: "1 MiB", status: ReceiverFileStatus.Downloaded}
+    ];
+    in-out property <string> current_dir: "/";
+
+    in property <bool> sender_connected;
+
+    property <DownloadingFile> downloading_file;
+    property <float> downloading_progress;
+
+    property <int> percentage : downloading_progress * 100;
+
+    //property <bool> create_meta_dialog_showing: false;
+
+    callback download(remote_path: string, remote_name: string);
+    callback resume(remote_path: string);
+    callback stop_downloading();
+    callback directory_changed(dir: string);
+
+    public function set_downloading_file(file: DownloadingFile) {
+        downloading_file = file;
+        downloading_progress = 0.0;
+    }
+
+    public function set_progress(progress: float) {
+        downloading_progress = progress;
+    }
+
+    preferred-width: 600px;
+    preferred-height: 400px;
+
+    VerticalLayout {
+        padding: 0;
+        spacing: 0;
+
+        Rectangle {
+            property <float> default-ratio: 0.3;
+
+            property <length> splitter-width: 0px;
+            property <length> position: self.width * default-ratio;
+
+            background: #252525;
+
+            Rectangle {
+                x: 0;
+                width: position - (splitter-width / 2);
+                padding: 0;
+
+                background: #1f1f1f;
+                border-color: #292929;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 10px;
+                    Text {
+                        text: "Directories";
+                        font-size: 12pt;
+                    }
+
+                    ListView {
+                        for dir in directories: FlatButton {
+                            padding: 5px;
+                            text: dir.display-name;
+                            icon: @image-url("img/folder-icon.png");
+                            colorize: #ffffff;
+                            icon-width: 16px;
+
+                            clicked => {
+                                current_dir = dir.display-name;
+                                directory_changed(dir.actual-name);
+                            }
+                        }
+                    }
+
+                    if !downloading_file.file-name.is-empty: Rectangle {
+                        background: #005a66;//#007e4e;
+                        border-radius: 5px;
+                        clip: true;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            
+                            Rectangle {
+                                width: 32px;
+
+                                clip: true;
+
+                                button_bg := Rectangle {
+                                    width: 30px;
+                                    height: 30px;
+                                    //background: progress_ta.has-hover ? #00aec2 : #005a66;
+                                    border-radius: 15px;
+
+                                    progress_ta := TouchArea {
+                                        clicked => {
+                                            stop_downloading();
+                                            
+                                            downloading_file = {};
+                                            downloading_progress = 0.0;
+                                        }
+                                    }
+
+                                    animate background {
+                                         duration: 75ms;
+                                    }
+
+                                    states [
+                                        active when progress_ta.has-hover && !progress_ta.pressed: {
+                                            button_bg.background: #00aec2;
+                                        }
+                                        active when progress_ta.pressed: {
+                                            button_bg.background: #007c8a;
+                                        }
+                                    ]
+                                }
+
+                                if progress_ta.has-hover : Image {
+                                    source: @image-url("img/stop.png");
+                                    colorize: progress_ta.has-hover ? #002429 : #37c4d600;
+                                    width: 32px;
+
+                                    animate colorize {
+                                         duration: 75ms;
+                                    }
+                                }
+
+                                Spinner {
+                                    indeterminate: downloading_progress <= 0 || downloading_progress >= 1.0;
+                                    progress: downloading_progress;
+                                    visible: !progress_ta.has-hover;
+
+                                    animate progress {
+                                        duration: 200ms;
+                                    }
+                                }
+
+                                Text {
+                                    text: percentage + "%";
+                                    font-size: 7pt;
+                                    visible: !progress_ta.has-hover;
+                                }
+                            }
+
+                            VerticalLayout {
+                                padding-left: 10px;
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                spacing: 2px;
+
+                                Text {
+                                    text: "Downloading";
+                                }
+                                Text {
+                                    text: downloading_file.file-name;
+                                    font-size: 10pt;
+                                    font-weight: 600;
+
+                                    wrap: TextWrap.word-wrap;
+                                    overflow: TextOverflow.clip;
+                                }
+                                Text {
+                                    text: "Size: " + downloading_file.formatted-size;
+                                }
+                            }
+                        }
+
+                        states [
+                            hidden when !downloading_file.file-name.is-empty : {
+                                out {
+                                    animate * {
+                                        duration: 800ms;
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+
+            VerticalLayout {
+                x: position + (splitter-width / 2);
+                width: parent.width - position + (splitter-width / 2);
+
+                Rectangle {
+                    background: #1f1f1f;
+                    border-color: #292929;
+                    border-width: 1px;
+                    
+                    Text {
+                        text: current_dir;
+                        font-size: 12pt;
+                    }
+                }
+
+                ListView {
+                    vertical-stretch: 1;
+
+                    for file in files: row:= Rectangle {
+                        row_ta := TouchArea {}
+
+                        VerticalLayout {
+                            spacing: 0;
+                            padding: 0;
+
+                            HorizontalLayout {
+                                padding-left: 15px;
+                                padding-right: 15px;
+                                spacing: 15px;
+
+                                Image {
+                                    source: @image-url("img/file-black-icon.png");
+                                    width: 16px;
+                                    colorize: #ffffff;
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    padding-top: 5px;
+                                    padding-bottom: 5px;
+
+                                    Text {
+                                        text: file.name;
+                                        font-size: 12pt;
+
+                                        horizontal-alignment: TextHorizontalAlignment.left;
+                                        vertical-alignment: TextVerticalAlignment.center;
+
+                                        wrap: TextWrap.word-wrap;
+                                        overflow: TextOverflow.clip;
+                                    }
+
+                                    Text {
+                                        text: "Size: " + file.formatted-size;
+                                    }
+                                }
+
+                                Rectangle {
+                                    download_button := FlatButton {
+                                        icon: @image-url("img/download.svg");
+                                        icon-width: 24px;
+                                        colorize: #2ee600;
+                                        disabled-colorize: #b13131;
+                                        enabled: sender_connected || !downloading_file.remote-path.is-empty;
+                                        visible: file.status == ReceiverFileStatus.NotDownloaded && file.remote-path != downloading_file.remote-path;
+
+                                        clicked => {
+                                            download(file.remote-path, file.name);
+                                        }
+                                    }
+
+                                    resume_button := FlatButton {
+                                        icon: @image-url("img/resume.svg");
+                                        icon-width: 24px;
+                                        colorize: #2270d6;
+                                        //disabled-colorize: #b13131;
+                                        //enabled: sender_connected || !downloading_remote_path.is-empty;
+                                        visible: file.status == ReceiverFileStatus.Downloading && file.remote-path != downloading_file.remote-path;
+
+                                        clicked => {
+                                            resume(file.remote-path);
+                                        }
+                                    }
+
+                                    Spinner {
+                                        width: 16px;
+                                        visible: file.remote-path == downloading_file.remote-path;
+                                        indeterminate: true;
+                                    }
+
+                                    Image {
+                                        source: @image-url("img/checkmark.svg");
+                                        width: 16px;
+                                        colorize: #3dff3d;
+                                        visible: file.status == ReceiverFileStatus.Downloaded && file.remote-path != downloading_file.remote-path;
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                height: 2px;
+                                background: row_ta.has-hover || download_button.has-hover ? #4e4e4e : #00000000;
+
+                                animate background {
+                                    duration: 75ms;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: sender_connected ? #005a66 : #922929;
+                    height: 20px;
+                    
+                    Text {
+                        text: sender_connected ? 
+                            downloading_file.file-name.is-empty ? 
+                                "Sender is connected. Can download" : 
+                                "Sender is connected. Downloading" : 
+                            "Sender is not connected. Cannot download";
+                        font-weight: 700;
+                        color: #ffffff;
+                    }
+
+                    /*TouchArea {
+                        clicked => {
+                            root.sender_connected = !sender_connected;
+                        }
+                    }*/
+
+                    animate background {
+                         duration: 100ms;
+                    }
+                }
+            }
+
+            splitter := Rectangle {
+                x: ta.has-hover ? position - (splitter-width / 2) - 1px : position - (splitter-width / 2);
+                width: ta.has-hover ? splitter-width + 2px : splitter-width;
+
+                background: #9b9b9b;
+
+                animate background, width {
+                     duration: 50ms;
+                }
+            }
+
+            ta := TouchArea {
+                x: position - (10px / 2);
+                width: 10px;
+
+                moved() => {
+                    position = self.pressed ? max(150px, min(root.width - 300px, position + (self.mouse-x - splitter-width))) : position;
+                }
+
+                states [
+                    active when self.has-hover: {
+                        mouse-cursor: ew-resize;
+                    }
+                ]
+            }
+        }
+    }
+}

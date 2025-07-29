@@ -1,0 +1,233 @@
+
+import { LineEdit, StandardButton, ListView } from "std-widgets.slint";
+import { FlatButton } from "common.slint";
+export component CreateMetaDialog inherits Dialog {
+    title: "Create Metadata";
+    icon: @image-url("img/favicon2.ico");
+
+    //in-out property <string> local_path;
+    //in-out property <string> remote_path;
+
+    callback ok_clicked(local_path: string, remote_path: string);
+    callback cancel_clicked();
+    callback on_browse_clicked();
+
+    public function set_local_path(local_path: string, filename: string) {
+        local_edit.text = local_path;
+        remote_edit.text = filename;
+    }
+
+    width: 450px;
+    height: 180px;
+
+    VerticalLayout {
+        spacing: 15px;
+        padding: 7px;
+
+        VerticalLayout {
+            vertical-stretch: 1;
+            Text {
+                text: "Create metadata";
+                font-size: 12pt;
+            }
+        }
+
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 5px;
+            HorizontalLayout {
+                spacing: 10px;
+
+                Text {
+                    text: "Local file";
+                    vertical-alignment: center;
+                    font-size: 10pt;
+                    width: 80px;
+                }
+
+                HorizontalLayout {
+                    padding: 0;
+
+                    local_edit := LineEdit {
+                        placeholder-text: "Path to the file";
+                        text: "";
+                    }
+
+                    FlatButton {
+                        icon: @image-url("img/folder-icon.png");
+                        colorize: #ffffff;
+                        icon-width: 16px;
+
+                        clicked => {
+                            on_browse_clicked();
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+
+                Text {
+                    text: "Remote file";
+                    vertical-alignment: center;
+                    font-size: 10pt;
+                    width: 80px;
+                }
+
+                HorizontalLayout {
+                    padding: 0;
+
+                    remote_edit := LineEdit {
+                        placeholder-text: "New name";
+                        text: "";
+                    }
+
+                    FlatButton {
+                        //icon: @image-url("img/folder-icon.png");
+                        colorize: #ffffff;
+                        width: 36px;
+                        enabled: false;
+                    }
+                }
+            }
+        }
+    }
+
+    StandardButton {
+        kind: StandardButtonKind.ok;
+        enabled: !local_edit.text.is-empty && !remote_edit.text.is-empty;
+
+        clicked => {
+            ok_clicked(local_edit.text, remote_edit.text);
+            local_edit.text = "";
+            remote_edit.text = "";
+        }
+    }
+
+    StandardButton {
+        kind: StandardButtonKind.cancel;
+
+        clicked => {
+            cancel_clicked();
+            local_edit.text = "";
+            remote_edit.text = "";
+        }
+    }
+    
+}
+
+export component CreateMetaMultipleDialog inherits Dialog {
+    title: "Create Metadata";
+    icon: @image-url("img/favicon2.ico");
+
+    in-out property <[string]> local_paths : ["dsdsa", "sdadsa"];
+    out property <string> remote_dir : remote_edit.text;
+
+    callback ok_clicked();
+    callback cancel_clicked();
+    callback add_files_clicked();
+
+    //width: 450px;
+    height: 400px;
+
+    Rectangle {
+        width: 400px;
+
+        VerticalLayout {
+            spacing: 15px;
+            padding: 7px;
+
+            VerticalLayout {
+                vertical-stretch: 0;
+
+                Text {
+                    text: "Create metadata";
+                    font-size: 12pt;
+                }
+            }
+
+            VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 10px;
+                
+                HorizontalLayout {
+                    spacing: 10px;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+
+                    Text {
+                        text: "Remote directory";
+                        vertical-alignment: center;
+                        font-size: 10pt;
+                    }
+
+                    remote_edit := LineEdit {
+                        placeholder-text: "Directory name";
+
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                HorizontalLayout {
+                    Text {
+                        text: "Files";
+                        horizontal-stretch: 1;
+
+                        font-size: 12pt;
+                    }
+
+                    FlatButton {
+                        text: "Add";
+                        horizontal-stretch: 0;
+
+                        clicked => {
+                            add_files_clicked()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    border-width: 1px;
+                    border-color: #6d6d6d;
+                    border-radius: 5px;
+
+                    VerticalLayout {
+                        ListView {
+                            horizontal-stretch: 1;
+
+                            for p in local_paths: FlatButton {
+                                override-padding-top: 2px;
+                                override-padding-bottom: 2px;
+
+                                text: p;
+                            }
+                            
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    StandardButton {
+        kind: StandardButtonKind.ok;
+        enabled: !remote_dir.is-empty && local_paths.length > 0;
+
+        clicked => {
+            ok_clicked();
+            remote_edit.text = "";
+        }
+    }
+
+    StandardButton {
+        kind: StandardButtonKind.cancel;
+
+        clicked => {
+            cancel_clicked();
+            remote_edit.text = "";
+        }
+    }
+}

@@ -1,0 +1,85 @@
+
+import { Button, VerticalBox } from "std-widgets.slint";
+
+import { ConnectionStatus, FlatButton } from "common.slint";
+
+export component MainScreen inherits Window {
+    in property <ConnectionStatus> status;
+
+    callback receiver_clicked;
+    callback sender_clicked;
+
+    preferred-width: 600px;
+    preferred-height: 400px;
+
+    vertical-stretch: 1;
+
+    VerticalLayout {
+        vertical-stretch: 1;
+
+        Rectangle {
+            background: #2c2c2c;
+            height: 150px;
+            padding: 0;
+
+            HorizontalLayout {
+                VerticalLayout {
+                    padding: 40px;
+                    
+                    Text {
+                        text: "Welcome to rstr";
+                        font-size: 24pt;
+                    }
+
+                    Text {
+                        text: "Tool for relaying files through a server";
+                    }
+                }
+
+                VerticalLayout {
+                    padding-right: 40px;
+                    padding-top: 20px;
+                    padding-bottom: 20px;
+
+                    max-width: 350px;
+
+                    Text {
+                        text: "Select mode";
+                        font-size: 14pt;
+                    }
+
+                    FlatButton {
+                        enabled: status == ConnectionStatus.Connected;
+                        icon: @image-url("img/receive-file.svg");
+                        icon-width: 24px;
+                        colorize: #b0ff83;
+
+                        text: "Receiver";
+                        clicked => {
+                            root.receiver_clicked()
+                        }
+                    }
+
+                    FlatButton {
+                        enabled: status == ConnectionStatus.Connected;
+                        icon: @image-url("img/send-file.svg");
+                        icon-width: 24px;
+                        colorize: #ff8383;
+                        
+                        text: "Sender";
+                        clicked => {
+                            root.sender_clicked()
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            background: #1d1d1d;
+            vertical-stretch: 1;
+            padding: 0;
+        }
+    }
+    
+}

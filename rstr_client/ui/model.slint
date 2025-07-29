@@ -1,0 +1,58 @@
+export struct Directory {
+    display_name: string,
+    actual_name: string
+}
+
+export enum ReceiverFileStatus {
+    NotDownloaded,
+    Downloading,
+    Downloaded,
+}
+
+export struct ReceiverFile {
+    name: string,
+    dir: string,
+    status: ReceiverFileStatus,
+    formatted_size: string,
+    remote_path: string,
+    local_path: string,
+    downloaded_progress: float
+}
+
+/*export enum SenderFileStatus {
+    MetaCreating,
+    MetaCreated
+}*/
+
+export struct SenderFile {
+    name: string,
+    dir: string,
+    //status: SenderFileStatus,
+    formatted_size: string,
+    remote_path: string,
+    local_path: string,
+    meta_creation_progress: float
+}
+
+export struct CurrentSenderDirectory {
+    name: string,
+    files: [SenderFile]
+}
+
+export struct MetaFile {
+    name: string,
+    formatted_size: string
+}
+
+export struct DownloadingFile {
+    remote_path: string,
+    file_name: string,
+    formatted_size: string
+}
+
+export struct TransferingFile {
+    file_name: string,
+    //formatted_size: string,
+    chunk_index: int,
+    total_chunks: int
+}
