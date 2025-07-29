@@ -19,7 +19,7 @@ jobs:
     - uses: actions/checkout@v4
     - run: cd rstr_client
     - name: Build
-      run: cargo build --verbose --release
+      run: cd rstr_client && cargo build --verbose --release
     - name: Cache
       uses: actions/cache@v4
       with:
@@ -32,9 +32,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - run: cd rstr_client
     - name: Build
-      run: cargo build --verbose --release
+      run: cd rstr_client && cargo build --verbose --release
     - name: Cache
       uses: actions/cache@v4
       with:
@@ -47,9 +46,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - run: cd rstr_server
     - name: Build
-      run: cargo build --verbose --release
+      run: cd rstr_server && cargo build --verbose --release
     - name: Cache
       uses: actions/cache@v4
       with:
