@@ -1,4 +1,4 @@
-![rstr](assets/logo.png)
+![rstr](assets/logo-dark.png#gh-dark-mode-only) ![rstr](assets/logo-dark.png#gh-light-mode-only)
 
 Overview
 -
@@ -33,7 +33,7 @@ Receier mode is used to download the files from the Sender. To download the file
 Setting up a Server
 -
 
-> **Warning**
+> [!Warning]
 > Currently the server does not support TLS configuration which is why it is very recommended that it is set up behind a reverse proxy (e.g. Nginx). Make sure to proxy the WebSocket connection as it is used as the main communication protocol.
 
 **rstr** server uses the following environment variables for configuration:
