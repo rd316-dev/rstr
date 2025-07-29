@@ -337,6 +337,15 @@ async fn logic(
                 EventMessage::FileFinishedDownloading(_) => {
                     event_processing_tx.send(ProcessingEvent::FileFinishedDownloading).await.unwrap();
                 },
+                EventMessage::TransferStarted(file) => {
+
+                },
+                EventMessage::TransferStopped => {
+
+                },
+                EventMessage::TransferFinished => {
+
+                },
                 EventMessage::Quit => {
                     println!("Quitting");
                     break;
