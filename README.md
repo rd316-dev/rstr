@@ -1,4 +1,4 @@
-![rstr](assets/logo-dark.png#gh-dark-mode-only) ![rstr](assets/logo-dark.png#gh-light-mode-only)
+![rstr](assets/logo-dark.png#gh-dark-mode-only) ![rstr](assets/logo-light.png#gh-light-mode-only)
 
 Overview
 -
