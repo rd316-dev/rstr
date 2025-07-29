@@ -6,3 +6,4 @@ rstr_client/sender/
 rstr_core/target/
 rstr_projfs/target/
 rstr_server/target/
+rstr_server/server/
