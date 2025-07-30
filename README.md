@@ -1,4 +1,5 @@
-![rstr](assets/logo-dark.png#gh-dark-mode-only) ![rstr](assets/logo-light.png#gh-light-mode-only)
+![rstr](assets/logo-dark.png#gh-dark-mode-only) 
+![rstr](assets/logo-light.png#gh-light-mode-only)
 
 Overview
 -
@@ -6,6 +7,9 @@ Overview
 **rstr** is an HTTP P2P file relay for Windows and Linux.
 
 It allows you to transfer files stored on one PC to another PC through an HTTP server using WebSockets. All files are transferred in chunks - if the transfer interrupts you can always continue it from where it stopped and rstr will ensure file's integrity.
+
+![slint-logo](assets/MadeWithSlint-logo-dark.png#gh-dark-mode-only)
+![slint-logo](assets/MadeWithSlint-logo-light.png#gh-light-mode-only)
 
 Getting Started
 -
