@@ -7,14 +7,15 @@ use tokio::{fs::File, io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufRead
 use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Debug)]
-pub enum ReadFromFileError {
+pub enum MetaLoadError {
     IOError,
     DeserializationError
 }
 
 #[derive(Debug)]
-pub enum WriteToFileError {
+pub enum MetaSaveError {
     IOError,
+    FileCreationError,
     SerializationError
 }
 
@@ -71,7 +72,7 @@ impl From<std::io::Error> for CreateMetadataError {
 }
 
 impl MetaIndex {
-    pub async fn load(path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<Self, ReadFromFileError> {
+    pub async fn load(path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<Self, MetaLoadError> {
         let file = match File::open(path.join("index")).await {
             Ok(f) => f,
             Err(_) => { 
@@ -82,22 +83,22 @@ impl MetaIndex {
         let buf_reader = &mut BufReader::with_capacity(8192, file);
 
         let mut buf = vec![];
-        buf_reader.read_to_end(&mut buf).await.map_err(|_| ReadFromFileError::IOError)?;
+        buf_reader.read_to_end(&mut buf).await.map_err(|_| MetaLoadError::IOError)?;
 
-        let (index, _): (MetaIndex, usize) = bincode::decode_from_slice(&buf, *bincode_config).map_err(|_| ReadFromFileError::DeserializationError)?;
+        let (index, _): (MetaIndex, usize) = bincode::decode_from_slice(&buf, *bincode_config).map_err(|_| MetaLoadError::DeserializationError)?;
 
         Ok(index)
     }
 
-    pub async fn save(&self, path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<(), WriteToFileError> {
-        tokio::fs::create_dir_all(path).await.unwrap();
-        let file = File::create(path.join("index")).await.unwrap();//.map_err(|_| WriteToFileError::IOError)?;
+    pub async fn save(&self, path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<(), MetaSaveError> {
+        tokio::fs::create_dir_all(path).await.map_err(|_| MetaSaveError::FileCreationError)?;
+        let file = File::create(path.join("index")).await.map_err(|_| MetaSaveError::FileCreationError)?;
 
         let buf_writer = &mut BufWriter::with_capacity(8192, file);
-        let buf = bincode::encode_to_vec(&self, *bincode_config).map_err(|_| WriteToFileError::SerializationError)?;
+        let buf = bincode::encode_to_vec(&self, *bincode_config).map_err(|_| MetaSaveError::SerializationError)?;
 
-        buf_writer.write_all(&buf).await.unwrap();//.map_err(|_| WriteToFileError::IOError)?;
-        buf_writer.flush().await.unwrap();
+        buf_writer.write_all(&buf).await.map_err(|_| MetaSaveError::IOError)?;
+        buf_writer.flush().await.map_err(|_| MetaSaveError::IOError)?;
 
         Ok(())
     }
@@ -294,8 +295,6 @@ impl MetaIndex {
 
         read_thread.await.unwrap();
 
-        //progress_tx.send(1.0f32).unwrap();
-        //*progress_mut.get_mut() = 1.0f32;
         *progress_mut.lock().await = 1.0f32;
 
         return Ok(meta);
