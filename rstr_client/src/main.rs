@@ -11,7 +11,7 @@ use size::Size;
 use tokio::{fs::File, sync::mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::{self, Message}};
 
-use crate::client::{Receiver, Sender};
+use crate::client::{Client, Receiver, Sender};
 
 //use crate::{client::{EventMessage, Receiver, Sender}, gui::{process_gui_event, setup_ui, ProcessingEvent}};
 
@@ -122,7 +122,7 @@ async fn logic(
 
             match message {
                 EventMessage::LogInAsReceiver => {
-                    let mut receiver = Receiver::new(&PathBuf::from("receiver"), event_tx.clone(), &config).await.unwrap();
+                    let mut receiver: Receiver = Receiver::new(&PathBuf::from("receiver"), event_tx.clone(), &config).await.unwrap();
 
                     match receiver.login("receiver", "h87s8ghegh48ghs4gs84hg8s4h8").await {
                         Ok(_) => {

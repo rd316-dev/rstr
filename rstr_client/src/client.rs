@@ -1,5 +1,3 @@
-//use std::{collections::HashMap, fs::File, io::{BufWriter, Seek, SeekFrom, Write}, thread::{self}};
-
 use std::{collections::HashSet, hash::Hasher, io::SeekFrom, path::PathBuf, sync::Arc, time::{Duration, SystemTime}};
 
 use bytes::Bytes;
@@ -12,16 +10,7 @@ use tokio_util::sync::CancellationToken;
 use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Debug)]
-pub enum NewReceiverError {
-    //DirError,
-    //FileOpenError,
-    MetaReadError
-}
-
-#[derive(Debug)]
-pub enum NewSenderError {
-    //DirError,
-    //FileOpenError,
+pub enum NewClientError {
     MetaReadError
 }
 
@@ -100,9 +89,26 @@ pub struct Sender {
     sender_cancellation_token: Option<CancellationToken>
 }
 
-impl Receiver {
-    pub async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewReceiverError> {
-        let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewReceiverError::MetaReadError)?;
+pub trait Client : Sized {
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError>;
+    async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError>;
+    fn get_event_sender(&self) -> &mpsc::Sender<EventMessage>;
+
+    async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError> {
+        let message = BinaryMessage::new(payload);
+        self.send_event(EventMessage::SendMessage(message)).await
+    }
+
+    async fn send_event(&self, message: EventMessage) -> Result<(), ClientHandlerError> {
+        self.get_event_sender().send(message)
+            .await
+            .map_err(|_| ClientHandlerError::IOError)
+    }
+}
+
+impl Client for Receiver {
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError> {
+        let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
         let last_updated = index.get_last_updated();
         let receiver = Receiver {
@@ -120,25 +126,45 @@ impl Receiver {
         Ok(receiver)
     }
 
-    pub async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError>{
-        let message = BinaryMessage::new(payload);
-        self.internal.send(EventMessage::SendMessage(message))
-            .await
-            .map_err(|_| ClientHandlerError::IOError)
-    }
-
-    pub async fn send_event(&self, message: EventMessage) -> Result<(), ClientHandlerError>{
-        self.internal.send(message)
-            .await
-            .map_err(|_| ClientHandlerError::IOError)
-    }
-
-    pub async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError> {
+    async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError> {
         self.send_message(MessagePayload::Login(LoginData {
             login_type: LoginType::Receiver, username: username.to_string(), key: password.to_string() 
         })).await
     }
 
+    fn get_event_sender(&self) -> &mpsc::Sender<EventMessage> {
+        &self.internal
+    }
+}
+
+impl Client for Sender {
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError> {
+        let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
+
+        let sender = Sender {
+            data_dir: data_dir.to_owned(),
+            index: index,
+            bincode_config: *bincode_config,
+
+            state: SenderState::Initializing,
+            internal: internal,
+            sender_cancellation_token: None,
+        };
+
+        Ok(sender)
+    }
+    async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError> {
+        self.send_message(MessagePayload::Login(LoginData {
+            login_type: LoginType::Sender, username: username.to_string(), key: password.to_string() 
+        })).await
+    }
+
+    fn get_event_sender(&self) -> &mpsc::Sender<EventMessage> {
+        &self.internal
+    }
+}
+
+impl Receiver {
     pub async fn request_new_meta(&mut self) -> Result<(), ClientHandlerError> {
         self.request_meta(self.index.get_last_updated()).await
     }
@@ -495,45 +521,6 @@ impl Receiver {
 }
 
 impl Sender {
-
-    pub async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewSenderError> {
-        let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewSenderError::MetaReadError)?;
-
-        let sender = Sender {
-            data_dir: data_dir.to_owned(),
-            index: index,
-            bincode_config: *bincode_config,
-
-            state: SenderState::Initializing,
-            internal: internal,
-            sender_cancellation_token: None,
-        };
-
-        Ok(sender)
-    }
-
-    /*pub fn get_state(&self) -> &SenderState {
-        &self.state
-    }*/
-
-    pub async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError>{
-        let message = BinaryMessage::new(payload);
-        self.internal.send(EventMessage::SendMessage(message))
-            .await
-            .map_err(|_| ClientHandlerError::IOError)
-    }
-
-    pub async fn send_event(&self, message: EventMessage) -> Result<(), ClientHandlerError>{
-        self.internal.send(message)
-            .await
-            .map_err(|_| ClientHandlerError::IOError)
-    }
-
-    pub async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError> {
-        self.send_message(MessagePayload::Login(LoginData {
-            login_type: LoginType::Sender, username: username.to_string(), key: password.to_string() 
-        })).await
-    }
 
     pub async fn create_meta(&mut self, local_path: &PathBuf, remote_path: &str) {
         let local_path = local_path.clone();
