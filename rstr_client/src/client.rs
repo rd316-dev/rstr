@@ -5,15 +5,11 @@ use std::{collections::HashSet, hash::Hasher, io::SeekFrom, path::PathBuf, sync:
 use bytes::Bytes;
 use lexical_sort::lexical_cmp;
 use rstr_core::{binary::serialization::DeserializationError, message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, NotifyUpdatedData, RequestChunkData, RequestMetaData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{MetaIndex, MetaIndexEntry}};
-//use sha1::{digest::core_api::CoreWrapper, Digest, Sha1, Sha1Core};
+use rstr_ui::{event_message::EventMessage, model::{DirectoryData, ReceiverFileData, ReceiverFileStatusData, SenderFileData, TransferingFileData}};
 use size::Size;
 use tokio::{fs::{File, OpenOptions}, io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter}, sync::{mpsc, Mutex}};
 use tokio_util::sync::CancellationToken;
 use xxhash_rust::xxh3::Xxh3;
-
-use crate::{Directory, ReceiverFile, ReceiverFileStatus, SenderFile, TransferingFile};
-
-//const META_FILE: &'static str = "metadata";
 
 #[derive(Debug)]
 pub enum NewReceiverError {
@@ -52,36 +48,6 @@ impl From<std::io::Error> for ClientHandlerError {
     fn from(_: std::io::Error) -> Self {
         ClientHandlerError::IOError
     }
-}
-
-pub enum EventMessage {
-    ProcessMessage(BinaryMessage),
-    SendMessage(BinaryMessage),
-    UploadMeta(PathBuf, String),
-    UploadMultipleMeta(String, Vec<PathBuf>),
-    LogInAsReceiver,
-    LogInAsSender,
-    LoggedInAsReceiver(Vec<Directory>, Vec<ReceiverFile>),
-    LoggedInAsSender(Vec<Directory>, Vec<SenderFile>),
-    UpdateReceiverFiles(Vec<Directory>, Vec<ReceiverFile>),
-    UpdateSenderFiles(Vec<Directory>, Vec<SenderFile>),
-    MetaCreationError,
-    MetaProgressReport(f32),
-    MetaCreated(MetaIndexEntry),
-    SenderConnected,
-    SenderDisconnected,
-    FileRequested(String, PathBuf),
-    FileResumed(String),
-    DownloadStopped,
-    //FilePartReceived(usize, CoreWrapper<Sha1Core>),
-    FilePartIoError,
-    FileStartedDownloading(String, String, String, u64),
-    FileDownloadProgress(f32),
-    FileFinishedDownloading(String),
-    TransferStarted(TransferingFile),
-    TransferFinished,
-    TransferStopped,
-    Quit
 }
 
 struct RequestingFile {
@@ -428,9 +394,9 @@ impl Receiver {
         Ok(())
     }
 
-    fn convert_index(&self) -> (Vec<Directory>, Vec<ReceiverFile>) {
+    fn convert_index(&self) -> (Vec<DirectoryData>, Vec<ReceiverFileData>) {
         let mut dirs: HashSet<String> = HashSet::new();
-        let mut files: Vec<ReceiverFile> = vec![];
+        let mut files: Vec<ReceiverFileData> = vec![];
 
         dirs.insert("".to_owned());
 
@@ -454,20 +420,20 @@ impl Receiver {
             let chunks_left = chunks_total - e.received_chunks.len();
 
             let status = if chunks_left == chunks_total {
-                ReceiverFileStatus::NotDownloaded
+                ReceiverFileStatusData::NotDownloaded
             } else if chunks_left > 0 {
-                ReceiverFileStatus::Downloading
+                ReceiverFileStatusData::Downloading
             } else {
-                ReceiverFileStatus::Downloaded
+                ReceiverFileStatusData::Downloaded
             };
 
-            let file = ReceiverFile {
-                name: filename.to_owned().into(),
-                dir: directory_path.clone().into(),
+            let file = ReceiverFileData {
+                name: filename.to_owned(),
+                dir: directory_path.clone(),
                 status: status,
-                remote_path: remote_path.into(),
-                local_path: e.local_path.to_str().unwrap().into(),
-                formatted_size: formatted_size.into(),
+                remote_path: remote_path,
+                local_path: e.local_path.to_str().unwrap().to_owned(),
+                formatted_size: formatted_size,
                 downloaded_progress: 0.0f32,
             };
 
@@ -475,7 +441,7 @@ impl Receiver {
             files.push(file);
         });
         
-        let mut dirs: Vec<Directory> = dirs.iter().map(|d| Directory{ display_name: ("/".to_owned() + &d).into(), actual_name: d.into() }).collect();
+        let mut dirs: Vec<DirectoryData> = dirs.iter().map(|d| DirectoryData{ display_name: ("/".to_owned() + &d).into(), actual_name: d.into() }).collect();
         dirs.sort_by(|d1, d2| lexical_cmp(d1.actual_name.as_str(), d2.actual_name.as_str()));
 
         println!("Dirs:");
@@ -723,9 +689,9 @@ impl Sender {
         Ok(())
     }
 
-    fn convert_index(&self) -> (Vec<Directory>, Vec<SenderFile>) {
+    fn convert_index(&self) -> (Vec<DirectoryData>, Vec<SenderFileData>) {
         let mut dirs: HashSet<String> = HashSet::new();
-        let mut files: Vec<SenderFile> = vec![];
+        let mut files: Vec<SenderFileData> = vec![];
 
         dirs.insert("".to_owned());
 
@@ -745,12 +711,12 @@ impl Sender {
                 directory_path = tokens.join("/");
             }
 
-            let file = SenderFile {
-                name: filename.to_owned().into(),
-                dir: directory_path.clone().into(),
-                remote_path: remote_path.into(),
-                local_path: e.local_path.to_str().unwrap().into(),
-                formatted_size: formatted_size.into(),
+            let file = SenderFileData {
+                name: filename.to_owned(),
+                dir: directory_path.clone(),
+                remote_path: remote_path,
+                local_path: e.local_path.to_str().unwrap().to_owned(),
+                formatted_size: formatted_size,
                 meta_creation_progress: 0.0f32,
             };
 
@@ -758,7 +724,7 @@ impl Sender {
             files.push(file);
         });
         
-        let mut dirs: Vec<Directory> = dirs.iter().map(|d| Directory{ display_name: ("/".to_owned() + &d).into(), actual_name: d.into() }).collect();
+        let mut dirs: Vec<DirectoryData> = dirs.iter().map(|d| DirectoryData{ display_name: ("/".to_owned() + &d), actual_name: d.to_string() }).collect();
         dirs.sort_by(|d1, d2| lexical_cmp(d1.actual_name.as_str(), d2.actual_name.as_str()));
 
         (dirs, files)
@@ -789,16 +755,16 @@ impl Sender {
         tokio::spawn(async move {
             let cancel_sender = sender.clone();
             let cancel_task = async move {
-                cancel_sender.send(EventMessage::TransferStopped);
+                cancel_sender.send(EventMessage::TransferStopped).await.unwrap();
                 cancellation_token.cancelled().await
             };
 
             let transmit_task = async move {
-                sender.send(EventMessage::TransferStarted(TransferingFile {
-                    file_name: file_name.into(),
+                sender.send(EventMessage::TransferStarted(TransferingFileData {
+                    file_name: file_name,
                     chunk_index: chunk_index as i32,
                     total_chunks: total_chunks as i32,
-                }));
+                })).await.unwrap();
 
                 let file = File::open(&local_filepath).await.unwrap();
                 let mut buf_reader = BufReader::with_capacity(65536, file);
@@ -826,7 +792,7 @@ impl Sender {
                     }
                 };
 
-                sender.send(EventMessage::TransferFinished);
+                sender.send(EventMessage::TransferFinished).await.unwrap();
             };
 
             tokio::select! {

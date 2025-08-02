@@ -1,0 +1,20 @@
+[package]
+name = "rstr_ui"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rstr_ui"
+path = "src/lib.rs"
+
+[dependencies]
+rstr_core = {path="../rstr_core"}
+size = "0.5.0"
+rfd = "0.15.3"
+tokio = { version = "1.45.1", features = ["io-util", "rt", "macros", "rt-multi-thread"]}
+tokio-util = "0.7.15"
+lexical-sort = "0.3.1"
+slint = { version = "1.12", features = ["renderer-skia", "image-default-formats"] }
+
+[build-dependencies]
+slint-build = "1.12"

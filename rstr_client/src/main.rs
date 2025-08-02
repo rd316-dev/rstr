@@ -1,20 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod client;
-mod gui;
 
 use std::{env, error::Error, path::PathBuf, time::Duration};
 
 use bytes::{Bytes};
 use futures::{SinkExt, StreamExt};
 use rstr_core::message::BinaryMessage;
+use rstr_ui::{event_message::EventMessage, gui::{ConnectionStatus, GuiContext, ProcessingEvent}, model::MetaFileData};
 use size::Size;
-use slint::{ComponentHandle};
 use tokio::{fs::File, sync::mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::{self, Message}};
 
-use crate::{client::{EventMessage, Receiver, Sender}, gui::{process_gui_event, setup_ui, ProcessingEvent}};
+use crate::client::{Receiver, Sender};
 
-slint::include_modules!();
+//use crate::{client::{EventMessage, Receiver, Sender}, gui::{process_gui_event, setup_ui, ProcessingEvent}};
 
 #[derive(Debug)]
 enum HandlerError {
@@ -214,12 +213,12 @@ async fn logic(
                             let metadata = file.metadata().await.unwrap();
                             let size = metadata.len();
 
-                            let file_name = local_path.file_name().unwrap().to_str().unwrap();
+                            let file_name = local_path.file_name().unwrap().to_str().unwrap().to_owned();
                             let formatted_size = Size::from_bytes(size).format().to_string();
 
                             println!("Generating metadata...");
                             event_processing_tx.send(
-                                ProcessingEvent::MetadataCreationStarted(MetaFile { name: file_name.into(), formatted_size: formatted_size.into() })
+                                ProcessingEvent::MetadataCreationStarted(MetaFileData { name: file_name, formatted_size: formatted_size })
                             ).await.unwrap();
 
                             sender.create_meta(&local_path, &remote_path).await;
@@ -230,7 +229,7 @@ async fn logic(
                 EventMessage::UploadMultipleMeta(remote_dir, local_paths) => {
                     match &mut client {
                         ClientType::Sender(sender) => {
-                            let mut meta_files: Vec<MetaFile> = vec![];
+                            let mut meta_files: Vec<MetaFileData> = vec![];
 
                             for local_path in local_paths.clone() {
                                 let file_name = local_path.file_name().unwrap().to_str().unwrap().to_owned();
@@ -250,7 +249,7 @@ async fn logic(
 
                                 let formatted_size = Size::from_bytes(size).format().to_string();
 
-                                meta_files.push(MetaFile { name: file_name.into(), formatted_size: formatted_size.into() });
+                                meta_files.push(MetaFileData { name: file_name, formatted_size: formatted_size });
                             }
 
                             println!("Generating metadata...");
@@ -381,12 +380,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (processing_tx, processing_rx) = mpsc::channel(1024 * 1024);
     let (event_tx, event_rx) = mpsc::channel(16 * 1024 * 1024);
     
-    let context = setup_ui(event_tx.clone(), processing_tx.clone())?;
+    let context = GuiContext::setup_ui(event_tx.clone(), processing_tx.clone())?;
 
-    let processing_ui = context.app_window.clone_strong();
-    slint::spawn_local(async move {
-        return process_gui_event(processing_ui, processing_rx).await
-    })?;
+    context.process_gui_events(processing_rx);
 
     std::thread::spawn(move || {
         let tokio_rt = tokio::runtime::Runtime::new().unwrap();
@@ -395,7 +391,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }).unwrap();
     });
 
-    context.app_window.run()?;
+    context.run()?;
 
     Ok(())
 }
