@@ -4,20 +4,20 @@ mod client;
 use std::{env, error::Error, path::PathBuf, time::Duration};
 
 use bytes::{Bytes};
-use futures::{SinkExt, StreamExt};
+use futures::{stream::FusedStream, SinkExt, StreamExt};
 use rstr_core::message::BinaryMessage;
 use rstr_ui::{event_message::EventMessage, gui::{ConnectionStatus, GuiContext, ProcessingEvent}, model::MetaFileData};
 use size::Size;
 use tokio::{fs::File, sync::mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::{self, Message}};
 
-use crate::client::{Client, Receiver, Sender};
+use crate::client::{Client, ClientHandlerError, Receiver, Sender};
 
 #[derive(Debug)]
 enum HandlerError {
     TungsteniteError(tungstenite::error::Error),
     DecodeError(bincode::error::DecodeError),
-    //EncodeError(bincode::error::EncodeError),
+    EncodeError(bincode::error::EncodeError),
     //ClientHandlerError(ClientHandlerError),
     //UnableToConnect,
     ConnectionInterrupted
@@ -94,7 +94,13 @@ async fn logic(
                         },
                     };
 
-                    read_event_tx.send(EventMessage::ProcessMessage(binary_message)).await.unwrap();
+                    match read_event_tx.send(EventMessage::ProcessMessage(binary_message)).await {
+                        Err(_) => {
+                            result = Err(HandlerError::ConnectionInterrupted);
+                            break;
+                        },
+                        _ => {}
+                    }
                 },
                 Err(error) => { 
                     result = Err(HandlerError::TungsteniteError(error)); 
@@ -105,19 +111,31 @@ async fn logic(
         return result;
     };
 
-    tokio::spawn (async move {
+    let write_task = tokio::spawn (async move {
         loop {
-            let message = transmission_rx.recv().await.unwrap();
+            let message = match transmission_rx.recv().await {
+                Some(m) => m,
+                None => {
+                    break;
+                },
+            };
 
             match bincode::encode_to_vec(message, config) {
                 Ok(encoded) => {
-                    write.send(Message::binary(Bytes::from(encoded))).await.unwrap();
+                    match write.send(Message::binary(Bytes::from(encoded))).await {
+                        Err(error) => {
+                            return Err(HandlerError::TungsteniteError(error))
+                        },
+                        _ => {}
+                    }
                 },
                 Err(error) => { 
-                    println!("Error occurred while encoding a message: {:?}", error);
+                    return Err(HandlerError::EncodeError(error));
                 },
             }
         }
+
+        Ok(())
     });
 
     let event_processing_tx = processing_tx.clone();
@@ -364,6 +382,14 @@ async fn logic(
                 Err(err) => println!("Error occurred in read task: {:?}", err),
                 _ => {
                     println!("Read task is cancelled")
+                }
+            }
+        },
+        wt = write_task => {
+            match wt {
+                Err(err) => println!("Error occurred in writing task: {:?}", err),
+                _ => {
+                    println!("Writing task in cancelled")
                 }
             }
         },
