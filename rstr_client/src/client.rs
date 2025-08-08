@@ -19,6 +19,7 @@ pub enum NewClientError {
 pub enum ClientHandlerError {
     NotSupported,
     WrongState,
+    SerializationError,
     DeserializationError,
     IOError,
     InvalidHash(u64, u64),
@@ -73,6 +74,7 @@ pub struct Receiver {
 
     state: ReceiverState,
     internal: mpsc::Sender<EventMessage>,
+    transmission_tx: mpsc::Sender<BinaryMessage>,
 
     //last_updated: i64,
 
@@ -86,29 +88,27 @@ pub struct Sender {
 
     state: SenderState,
     internal: mpsc::Sender<EventMessage>,
+    transmission_tx: mpsc::Sender<BinaryMessage>,
 
     sender_cancellation_token: Option<CancellationToken>
 }
 
 pub trait Client : Sized {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError>;
+    async fn new(
+        data_dir: &PathBuf, 
+        internal: mpsc::Sender<EventMessage>, 
+        transmission_tx: mpsc::Sender<BinaryMessage>,
+        bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>
+    ) -> Result<Self, NewClientError>;
+
     async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError>;
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage>;
+    fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage>;
     fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>;
 
     async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError> {
         let message = BinaryMessage::new(payload);
-
-        let encoded = bincode::encode_to_vec(message.clone(), self.get_bincode_config().clone()).unwrap();
-
-        let mut string = "".to_owned();
-        for e in encoded {
-            string = format!("{} {:x} ", string, e);
-        }
-
-        println!("{}", string);
-
-        self.send_event(EventMessage::SendMessage(message)).await
+        self.get_transmission_sender().send(message).await.map_err(|_| ClientHandlerError::IOError)
     }
 
     async fn send_event(&self, message: EventMessage) -> Result<(), ClientHandlerError> {
@@ -119,7 +119,12 @@ pub trait Client : Sized {
 }
 
 impl Client for Receiver {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError> {
+    async fn new(
+        data_dir: &PathBuf, 
+        internal: mpsc::Sender<EventMessage>, 
+        transmission_tx: mpsc::Sender<BinaryMessage>,
+        bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>
+    ) -> Result<Self, NewClientError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
         //let last_updated = index.get_last_updated();
@@ -130,6 +135,7 @@ impl Client for Receiver {
 
             state: ReceiverState::Initializing,
             internal: internal,
+            transmission_tx: transmission_tx,
 
             //last_updated: last_updated,
             requesting_chunk: None
@@ -148,13 +154,22 @@ impl Client for Receiver {
         &self.internal
     }
 
+    fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage> {
+        &self.transmission_tx
+    }
+
     fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
         &self.bincode_config
     }
 }
 
 impl Client for Sender {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError> {
+    async fn new(
+        data_dir: &PathBuf, 
+        internal: mpsc::Sender<EventMessage>, 
+        transmission_tx: mpsc::Sender<BinaryMessage>,
+        bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>
+    ) -> Result<Self, NewClientError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
         let sender = Sender {
@@ -164,6 +179,8 @@ impl Client for Sender {
 
             state: SenderState::Initializing,
             internal: internal,
+            transmission_tx: transmission_tx,
+
             sender_cancellation_token: None,
         };
 
@@ -177,6 +194,10 @@ impl Client for Sender {
 
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage> {
         &self.internal
+    }
+
+    fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage> {
+        &self.transmission_tx
     }
 
     fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
@@ -759,16 +780,17 @@ impl Sender {
         let chunk_size = chunk.size.clone();
         let chunk_hash = chunk.hash;
 
-        let sender = self.internal.clone();
+        let event_tx = self.internal.clone();
+        let sender = self.transmission_tx.clone();
         tokio::spawn(async move {
-            let cancel_sender = sender.clone();
+            let cancel_tx = event_tx.clone();
             let cancel_task = async move {
-                cancel_sender.send(EventMessage::TransferStopped).await.unwrap();
+                cancel_tx.send(EventMessage::TransferStopped).await.unwrap();
                 cancellation_token.cancelled().await
             };
 
             let transmit_task = async move {
-                sender.send(EventMessage::TransferStarted(TransferingFileData {
+                event_tx.send(EventMessage::TransferStarted(TransferingFileData {
                     file_name: file_name,
                     chunk_index: chunk_index as i32,
                     total_chunks: total_chunks as i32,
@@ -791,7 +813,7 @@ impl Sender {
                         hash: chunk_hash, offset: chunk_offset + count as u64, data: outcoming_buf
                     });
                     
-                    sender.send(EventMessage::SendMessage(BinaryMessage::new(payload))).await.unwrap();
+                    sender.send(BinaryMessage::new(payload)).await.unwrap();
 
                     buf_reader.consume(size);
 
@@ -802,7 +824,7 @@ impl Sender {
                     }
                 };
 
-                sender.send(EventMessage::TransferFinished).await.unwrap();
+                event_tx.send(EventMessage::TransferFinished).await.unwrap();
             };
 
             tokio::select! {

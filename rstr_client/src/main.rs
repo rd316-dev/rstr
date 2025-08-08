@@ -33,7 +33,9 @@ enum ClientType {
 async fn logic(
     processing_tx: mpsc::Sender<ProcessingEvent>, 
     event_tx: mpsc::Sender<EventMessage>, 
-    mut event_rx: mpsc::Receiver<EventMessage>
+    mut event_rx: mpsc::Receiver<EventMessage>,
+    transmission_tx: mpsc::Sender<BinaryMessage>,
+    mut transmission_rx: mpsc::Receiver<BinaryMessage>
 ) -> Result<(), HandlerError> {
     let config = bincode::config::legacy();
 
@@ -103,6 +105,21 @@ async fn logic(
         return result;
     };
 
+    tokio::spawn (async move {
+        loop {
+            let message = transmission_rx.recv().await.unwrap();
+
+            match bincode::encode_to_vec(message, config) {
+                Ok(encoded) => {
+                    write.send(Message::binary(Bytes::from(encoded))).await.unwrap();
+                },
+                Err(error) => { 
+                    println!("Error occurred while encoding a message: {:?}", error);
+                },
+            }
+        }
+    });
+
     let event_processing_tx = processing_tx.clone();
     let event_processor_task = async move {
         let mut client = ClientType::None;
@@ -118,7 +135,7 @@ async fn logic(
 
             match message {
                 EventMessage::LogInAsReceiver => {
-                    let mut receiver: Receiver = Receiver::new(&PathBuf::from("receiver"), event_tx.clone(), &config).await.unwrap();
+                    let mut receiver: Receiver = Receiver::new(&PathBuf::from("receiver"), event_tx.clone(), transmission_tx.clone(), &config).await.unwrap();
 
                     match receiver.login("receiver", "h87s8ghegh48ghs4gs84hg8s4h8").await {
                         Ok(_) => {
@@ -133,7 +150,7 @@ async fn logic(
                     client = ClientType::Receiver(receiver);
                 },
                 EventMessage::LogInAsSender => {
-                    let mut sender = Sender::new(&PathBuf::from("sender"),event_tx.clone(), &config).await.unwrap();
+                    let mut sender = Sender::new(&PathBuf::from("sender"),event_tx.clone(), transmission_tx.clone(), &config).await.unwrap();
 
                     match sender.login("sender", "vn753498573q0v5983n5789qyunasp8fy3j").await {
                         Ok(_) => {
@@ -153,7 +170,7 @@ async fn logic(
                 EventMessage::LoggedInAsSender(dirs, files) => {
                     event_processing_tx.send(ProcessingEvent::LoggedInAsSender(dirs, files)).await.unwrap();
                 },
-                EventMessage::SendMessage(message) => {
+                /*EventMessage::SendMessage(message) => {
                     match bincode::encode_to_vec(message, config) {
                         Ok(encoded) => {
                             write.send(Message::binary(Bytes::from(encoded))).await.unwrap();
@@ -162,7 +179,7 @@ async fn logic(
                             println!("Error occurred while encoding a message: {:?}", error);
                         },
                     }
-                },
+                },*/
                 EventMessage::ProcessMessage(binary_message) => {
                     match &mut client {
                         ClientType::None => {},
@@ -363,6 +380,7 @@ async fn logic(
 fn main() -> Result<(), Box<dyn Error>> {
     let (processing_tx, processing_rx) = mpsc::channel(1024 * 1024);
     let (event_tx, event_rx) = mpsc::channel(16 * 1024 * 1024);
+    let (transmission_tx, transmission_rx) = mpsc::channel(16 * 1024 * 1024);
     
     let context = GuiContext::setup_ui(event_tx.clone(), processing_tx.clone())?;
 
@@ -371,7 +389,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::thread::spawn(move || {
         let tokio_rt = tokio::runtime::Runtime::new().unwrap();
         tokio_rt.block_on(async move {
-            return logic(processing_tx, event_tx, event_rx).await
+            return logic(processing_tx, event_tx, event_rx, transmission_tx, transmission_rx).await
         }).unwrap();
     });
 
