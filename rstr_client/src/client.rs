@@ -1,8 +1,9 @@
 use std::{collections::HashSet, hash::Hasher, io::SeekFrom, path::PathBuf, sync::Arc, time::{Duration, SystemTime}};
 
+use bincode::config::{Fixint, LittleEndian, NoLimit};
 use bytes::Bytes;
 use lexical_sort::lexical_cmp;
-use rstr_core::{binary::serialization::DeserializationError, message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, NotifyUpdatedData, RequestChunkData, RequestMetaData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{MetaIndex, MetaIndexEntry}};
+use rstr_core::{binary::serialization::DeserializationError, message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{MetaIndex, MetaIndexEntry}};
 use rstr_ui::{event_message::EventMessage, model::{DirectoryData, ReceiverFileData, ReceiverFileStatusData, SenderFileData, TransferingFileData}};
 use size::Size;
 use tokio::{fs::{File, OpenOptions}, io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter}, sync::{mpsc, Mutex}};
@@ -68,12 +69,12 @@ pub enum SenderState {
 pub struct Receiver {
     data_dir: PathBuf,
     index: MetaIndex,
-    bincode_config: bincode::config::Configuration,
+    bincode_config: bincode::config::Configuration<LittleEndian, Fixint, NoLimit>,
 
     state: ReceiverState,
     internal: mpsc::Sender<EventMessage>,
 
-    last_updated: i64,
+    //last_updated: i64,
 
     requesting_chunk: Option<RequestingFile>
 }
@@ -81,7 +82,7 @@ pub struct Receiver {
 pub struct Sender {
     data_dir: PathBuf,
     index: MetaIndex,
-    bincode_config: bincode::config::Configuration,
+    bincode_config: bincode::config::Configuration<LittleEndian, Fixint, NoLimit>,
 
     state: SenderState,
     internal: mpsc::Sender<EventMessage>,
@@ -90,12 +91,23 @@ pub struct Sender {
 }
 
 pub trait Client : Sized {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError>;
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError>;
     async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError>;
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage>;
+    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>;
 
     async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError> {
         let message = BinaryMessage::new(payload);
+
+        let encoded = bincode::encode_to_vec(message.clone(), self.get_bincode_config().clone()).unwrap();
+
+        let mut string = "".to_owned();
+        for e in encoded {
+            string = format!("{} {:x} ", string, e);
+        }
+
+        println!("{}", string);
+
         self.send_event(EventMessage::SendMessage(message)).await
     }
 
@@ -107,10 +119,10 @@ pub trait Client : Sized {
 }
 
 impl Client for Receiver {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError> {
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
-        let last_updated = index.get_last_updated();
+        //let last_updated = index.get_last_updated();
         let receiver = Receiver {
             data_dir: data_dir.to_owned(),
             index: index,
@@ -119,7 +131,7 @@ impl Client for Receiver {
             state: ReceiverState::Initializing,
             internal: internal,
 
-            last_updated: last_updated,
+            //last_updated: last_updated,
             requesting_chunk: None
         };
 
@@ -135,10 +147,14 @@ impl Client for Receiver {
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage> {
         &self.internal
     }
+
+    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
+        &self.bincode_config
+    }
 }
 
 impl Client for Sender {
-    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration) -> Result<Self, NewClientError> {
+    async fn new(data_dir: &PathBuf, internal: mpsc::Sender<EventMessage>, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, NewClientError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
         let sender = Sender {
@@ -162,14 +178,18 @@ impl Client for Sender {
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage> {
         &self.internal
     }
+
+    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
+        &self.bincode_config
+    }
 }
 
 impl Receiver {
-    pub async fn request_new_meta(&mut self) -> Result<(), ClientHandlerError> {
+    /*pub async fn request_new_meta(&mut self) -> Result<(), ClientHandlerError> {
         self.request_meta(self.index.get_last_updated()).await
-    }
+    }*/
 
-    pub async fn request_meta(&mut self, after: i64) -> Result<(), ClientHandlerError> {
+    /*pub async fn request_meta(&mut self, after: i64) -> Result<(), ClientHandlerError> {
         self.check_state(ReceiverState::Idle).map_err(|_| ClientHandlerError::WrongState)?;
 
         let data = RequestMetaData {
@@ -177,7 +197,7 @@ impl Receiver {
         };
 
         self.send_message(MessagePayload::RequestMeta(data)).await
-    }
+    }*/
 
     pub async fn request_file(&mut self, remote_path: &str, local_path: &PathBuf) -> Result<(), ClientHandlerError> {
         self.check_state(ReceiverState::Idle)?;
@@ -251,10 +271,10 @@ impl Receiver {
 
     pub async fn process_message(&mut self, message: &BinaryMessage) -> Result<(), ClientHandlerError> {
         match message.payload() {
-            MessagePayload::NotifyUpdated(data) => {
+            /*MessagePayload::NotifyUpdated(data) => {
                 self.check_states(&[ReceiverState::Idle, ReceiverState::Initializing])?;
                 self.process_notify_updated(&data).await?;
-            },
+            },*/
             MessagePayload::TransmitMeta(data) => {
                 self.check_state(ReceiverState::Idle)?;
                 self.process_transmit_meta(&data).await?;
@@ -283,13 +303,13 @@ impl Receiver {
         Ok(())
     }
 
-    async fn process_notify_updated(&mut self, data: &NotifyUpdatedData) -> Result<(), ClientHandlerError> {
+    /*async fn process_notify_updated(&mut self, data: &NotifyUpdatedData) -> Result<(), ClientHandlerError> {
         if data.last_modified > self.last_updated {
             self.request_meta(self.last_updated).await?;
         }
 
         Ok(())
-    }
+    }*/
 
     async fn process_transmit_meta(&mut self, data: &TransmitMetaData) -> Result<(), ClientHandlerError> {
         self.state = ReceiverState::ReceivingMeta;
@@ -330,7 +350,7 @@ impl Receiver {
         let file_modified = meta.file_modified;
         let local_path = entry.local_path.clone();
 
-        let buffer: &[u8] = &data.0;
+        let buffer: &[u8] = &data;
 
         let hashing_task = async move {
             chunk_hash.write(buffer);
@@ -737,6 +757,7 @@ impl Sender {
 
         let chunk_offset = chunk.offset.clone();
         let chunk_size = chunk.size.clone();
+        let chunk_hash = chunk.hash;
 
         let sender = self.internal.clone();
         tokio::spawn(async move {
@@ -764,9 +785,11 @@ impl Sender {
 
                     let size = read_buf.len();
                     let boundary = std::cmp::min(chunk_size - count, size as u32);
-                    let outcoming_buf = Bytes::from(read_buf[0..boundary as usize].to_vec());
+                    let outcoming_buf = read_buf[0..boundary as usize].to_vec();
 
-                    let payload = MessagePayload::TransmitChunk(TransmitChunkData{ data: BBytes(outcoming_buf) });
+                    let payload = MessagePayload::TransmitChunk(TransmitChunkData{
+                        hash: chunk_hash, offset: chunk_offset + count as u64, data: outcoming_buf
+                    });
                     
                     sender.send(EventMessage::SendMessage(BinaryMessage::new(payload))).await.unwrap();
 

@@ -13,8 +13,6 @@ use tokio_tungstenite::{connect_async, tungstenite::{self, Message}};
 
 use crate::client::{Client, Receiver, Sender};
 
-//use crate::{client::{EventMessage, Receiver, Sender}, gui::{process_gui_event, setup_ui, ProcessingEvent}};
-
 #[derive(Debug)]
 enum HandlerError {
     TungsteniteError(tungstenite::error::Error),
@@ -37,7 +35,7 @@ async fn logic(
     event_tx: mpsc::Sender<EventMessage>, 
     mut event_rx: mpsc::Receiver<EventMessage>
 ) -> Result<(), HandlerError> {
-    let config = bincode::config::standard();
+    let config = bincode::config::legacy();
 
     let mut args = env::args();
 
@@ -69,8 +67,6 @@ async fn logic(
 
     processing_tx.send(ProcessingEvent::ConnectionStatusChanged(ConnectionStatus::Connected)).await.unwrap();
 
-    //let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(131072); // 2^17, 128KiB
-    //let (message_tx, mut message_rx) = tokio::sync::mpsc::channel(131072); // 2^17, 128KiB
     let (mut write, mut read) = ws_stream.split();
 
     let read_event_tx = event_tx.clone();
@@ -153,14 +149,6 @@ async fn logic(
                 },
                 EventMessage::LoggedInAsReceiver(dirs, files) => {
                     event_processing_tx.send(ProcessingEvent::LoggedInAsReceiver(dirs, files)).await.unwrap();
-
-                    match &mut client {
-                        ClientType::Receiver(receiver) => {
-                            //receiver.logged_in();
-                            receiver.request_new_meta().await.unwrap();
-                        },
-                        _ => {}
-                    };
                 },
                 EventMessage::LoggedInAsSender(dirs, files) => {
                     event_processing_tx.send(ProcessingEvent::LoggedInAsSender(dirs, files)).await.unwrap();
@@ -364,10 +352,6 @@ async fn logic(
         },
         _ = event_processor_task => {
             println!("Event processing task is cancelled")
-            /*match et {
-                Err(err) => println!("Error occurred in event processor task: {:?}", err),
-                _ => {}
-            }*/
         }
     };
 

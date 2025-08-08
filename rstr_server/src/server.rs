@@ -1,9 +1,10 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, i64, net::SocketAddr, path::PathBuf, sync::Arc};
 
+use bincode::config::{Fixint, LittleEndian, NoLimit};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
-use rstr_core::{message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, NotifyUpdatedData, RemoveMetaData, RequestChunkData, RequestMetaData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{Meta, MetaIndex}};
+use rstr_core::{message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, RemoveMetaData, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{Meta, MetaIndex}};
 use tokio::{net::TcpStream, sync::{mpsc, Mutex}};
 use tokio_tungstenite::tungstenite::{self, Message};
 use tokio_util::{sync::CancellationToken};
@@ -59,7 +60,7 @@ pub struct Server {
     data_dir: PathBuf,
     message_rx: mpsc::Receiver<ServerMessage>,
     clients: HashMap<SocketAddr, Arc<Mutex<Client>>>,
-    bincode_config: bincode::config::Configuration,
+    bincode_config: bincode::config::Configuration<LittleEndian, Fixint, NoLimit>,
     index: MetaIndex,
 
     receiver_token: String,
@@ -70,7 +71,7 @@ impl Server {
     pub async fn new(
         data_dir: &PathBuf, 
         message_rx: mpsc::Receiver<ServerMessage>, 
-        bincode_config: &bincode::config::Configuration
+        bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>
     ) -> Result<Self, NewServerError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewServerError::MetaReadError)?;
 
@@ -162,7 +163,7 @@ impl Server {
         raw_stream: TcpStream, 
         addr: SocketAddr, 
         message_tx: mpsc::Sender<ServerMessage>,
-        bincode_config: bincode::config::Configuration,
+        bincode_config: bincode::config::Configuration<LittleEndian, Fixint, NoLimit>,
     ) {
         info!("Incoming TCP connection from: {}", addr);
 
@@ -295,13 +296,13 @@ impl Server {
             MessagePayload::Login(data) => self.handle_login(client, data).await,
             MessagePayload::PublishMeta(data) => self.handle_publish_meta(client, data).await,
             MessagePayload::RemoveMeta(data) => self.handle_remove_meta(client, data).await,
-            MessagePayload::RequestMeta(data) => self.handle_request_meta(client, data).await,
+            MessagePayload::_RequestMeta => Err(HandlerError::UnknownMessage),
             MessagePayload::RequestChunk(data) => self.handle_request_chunk(client, data).await,
             MessagePayload::TransmitChunk(data) => self.handle_transmit_chunk(client, data).await,
             MessagePayload::StopChunk => self.handle_stop_chunk(client).await,
 
             MessagePayload::NotifySenderStatus(_) => Err(HandlerError::Unsupported),
-            MessagePayload::NotifyUpdated(_) => Err(HandlerError::Unsupported),
+            MessagePayload::_NotifyUpdated => Err(HandlerError::UnknownMessage),
             MessagePayload::TransmitMeta(_) => Err(HandlerError::Unsupported),
             MessagePayload::LoginSuccess => Err(HandlerError::Unsupported)
         };
@@ -340,20 +341,34 @@ impl Server {
 
         client.outgoing.send(BinaryMessage::new(MessagePayload::LoginSuccess)).await.map_err(|_| HandlerError::IoError)?;
 
-        drop(client);
-
         match matched_type {
             ClientType::Receiver => {
                 info!("A receiver at {} has connected", addr);
 
+                let entries = self.index.get_modified_after(i64::MIN);
+
+                let meta = entries.iter().map(|e| e.meta.clone()).collect();
+
+                client.outgoing.send(BinaryMessage::new(
+                    MessagePayload::TransmitMeta(TransmitMetaData { meta: meta })
+                )).await.map_err(|_| HandlerError::IoError)?;
+
+                drop(client);
+
                 if self.exists_by_type(&ClientType::Sender).await {
                     self.notify_sender_status(UserStatus::Connected).await?;
+                } else {
+                    self.notify_sender_status(UserStatus::Disconnected).await?;
                 }
             },
             ClientType::Sender => {
-                info!("A sender at {} has connected", addr)
+                info!("A sender at {} has connected", addr);
+
+                drop(client);
             },
-            _ => {}
+            _ => {
+                drop(client);
+            }
         }
 
         if matched_type == ClientType::Sender {
@@ -384,7 +399,8 @@ impl Server {
 
         match self.get_by_type(&ClientType::Receiver).await {
             Ok(receiver) => {
-                receiver.outgoing.send(BinaryMessage::new(MessagePayload::NotifyUpdated(NotifyUpdatedData { last_modified: modified } ))).await.unwrap();
+                //receiver.outgoing.send(BinaryMessage::new(MessagePayload::NotifyUpdated(NotifyUpdatedData { last_modified: modified } ))).await.unwrap();
+                receiver.outgoing.send(BinaryMessage::new(MessagePayload::TransmitMeta(TransmitMetaData { meta: vec![meta] } ))).await.unwrap();
             },
             _ => {}
         }
@@ -403,7 +419,7 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_request_meta(&mut self, client: &Client, data: &RequestMetaData) -> Result<(), HandlerError> {
+    /*async fn handle_request_meta(&mut self, client: &Client, data: &RequestMetaData) -> Result<(), HandlerError> {
         Server::identified(client)?;
 
         let entries = self.index.get_modified_after(data.after);
@@ -414,7 +430,7 @@ impl Server {
         client.outgoing.send(message).await.map_err(|_| HandlerError::IoError)?;
 
         Ok(())
-    }
+    }*/
 
     async fn handle_request_chunk(&mut self, client: &Client, data: &RequestChunkData) -> Result<(), HandlerError> {
         Server::check_type(client, ClientType::Receiver)?;

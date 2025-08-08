@@ -40,7 +40,7 @@ async fn main() {
     let data_dir = PathBuf::from(data_dir_path);
     info!("Data directory: {}", std::path::absolute(&data_dir).unwrap().to_str().unwrap());
 
-    let config = bincode::config::standard();
+    let config = bincode::config::legacy();
 
     let (message_tx, message_rx) = mpsc::channel(1024*1024);
 

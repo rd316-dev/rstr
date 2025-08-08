@@ -1,5 +1,5 @@
 use std::{collections::HashSet, hash::Hasher, path::{Path, PathBuf}, sync::Arc, time::UNIX_EPOCH};
-use bincode::{Decode, Encode};
+use bincode::{config::{Fixint, LittleEndian, NoLimit}, Decode, Encode};
 use bytes::Bytes;
 //use num_traits::One;
 //use sha1::{Digest, Sha1};
@@ -72,7 +72,7 @@ impl From<std::io::Error> for CreateMetadataError {
 }
 
 impl MetaIndex {
-    pub async fn load(path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<Self, MetaLoadError> {
+    pub async fn load(path: &PathBuf, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<Self, MetaLoadError> {
         let file = match File::open(path.join("index")).await {
             Ok(f) => f,
             Err(_) => { 
@@ -90,7 +90,7 @@ impl MetaIndex {
         Ok(index)
     }
 
-    pub async fn save(&self, path: &PathBuf, bincode_config: &bincode::config::Configuration) -> Result<(), MetaSaveError> {
+    pub async fn save(&self, path: &PathBuf, bincode_config: &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>) -> Result<(), MetaSaveError> {
         tokio::fs::create_dir_all(path).await.map_err(|_| MetaSaveError::FileCreationError)?;
         let file = File::create(path.join("index")).await.map_err(|_| MetaSaveError::FileCreationError)?;
 
