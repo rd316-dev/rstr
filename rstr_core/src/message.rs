@@ -68,6 +68,7 @@ pub enum MessagePayload {
     TransmitChunk   (TransmitChunkData) = 10,
     NotifySenderStatus(UserStatus)      = 11,
     StopChunk                           = 12,
+    Ping                                = 13,
 }
 
 #[derive(Encode, Decode, Clone)]
