@@ -1,14 +1,17 @@
-use std::{collections::HashMap, i64, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, i64, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, SystemTime}};
 
 use bincode::config::{Fixint, LittleEndian, NoLimit};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
-use rstr_core::{message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, RemoveMetaData, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{Meta, MetaIndex}};
+use rstr_core::{message::{self, BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, RemoveMetaData, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{Meta, MetaIndex}};
 use tokio::{net::TcpStream, sync::{mpsc, Mutex}};
 use tokio_tungstenite::tungstenite::{self, Message};
 use tokio_util::{sync::CancellationToken};
 
+fn get_timestamp() -> u128 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
+}
 
 #[derive(Debug)]
 pub enum NewServerError {
@@ -32,7 +35,8 @@ pub enum HandlerError {
 pub enum ServerMessage {
     ClientConnected( Client ),
     Message( MessageFromClient ),
-    ClientDisconnected( SocketAddr )
+    CheckPing( SocketAddr ),
+    ClientDisconnected( SocketAddr ),
 }
 
 pub struct MessageFromClient {
@@ -53,6 +57,7 @@ pub struct Client {
     client_type: ClientType,
     outgoing: mpsc::Sender<BinaryMessage>,
     cancellation_token: CancellationToken,
+    last_ping: u128
     //incoming: mpsc::Receiver<BinaryMessage>
 }
 
@@ -77,12 +82,12 @@ impl Server {
 
         let receiver_token = match std::env::var("RSTR_RECEIVER_TOKEN") {
             Ok(token) => token,
-            Err(_) => "h87s8ghegh48ghs4gs84hg8s4h8".to_owned()
+            Err(_) => "badfea6f-4732-4fc6-acf8-796cc45cc0fa".to_owned()
         };
 
         let sender_token = match std::env::var("RSTR_SENDER_TOKEN") {
             Ok(token) => token,
-            Err(_) => "vn753498573q0v5983n5789qyunasp8fy3j".to_owned()
+            Err(_) => "5c6547d2-e2b6-448c-b5b9-e84e939b460a".to_owned()
         };
 
         let server = Server {
@@ -135,6 +140,22 @@ impl Server {
                         _ => {}
                     }
                 },
+                ServerMessage::CheckPing(addr) => {
+                    let client = match self.clients.get(&addr) {
+                        Some(client) => client,
+                        None => {
+                            warn!("Unable to find a client with address {}", addr);
+                            continue;
+                        }
+                    }.lock().await;
+
+                    let current_timestamp = get_timestamp();
+
+                    let delta = current_timestamp - client.last_ping;
+                    if delta > 60000 {
+                        client.cancellation_token.cancel();
+                    }
+                },
                 ServerMessage::ClientDisconnected(addr) => {
                     let client = match self.clients.get(&addr) {
                         Some(client) => client,
@@ -149,11 +170,20 @@ impl Server {
 
                     if client_type == ClientType::Sender {
                         let _ = self.notify_sender_status(UserStatus::Disconnected).await;
+                    } else if client_type == ClientType::Receiver {
+                        match self.get_by_type(&ClientType::Sender).await {
+                            Ok(sender) => {
+                                let _ = sender.outgoing
+                                    .send(BinaryMessage::new(MessagePayload::StopChunk))
+                                    .await;
+                            },
+                            _ => {}
+                        }
                     }
 
                     info!("Client with address {} disconnected", addr);
                     
-                    self.clients.remove(&addr);   
+                    self.clients.remove(&addr);
                 }
             }
         }
@@ -179,19 +209,32 @@ impl Server {
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel(1024*1024);
 
         let cancellation_token = CancellationToken::new();
-        let client = Client { addr, client_type: ClientType::Unidentified, outgoing: outgoing_tx, cancellation_token: cancellation_token.clone() };
+        let client = Client { 
+            addr: addr, 
+            client_type: ClientType::Unidentified, 
+            outgoing: outgoing_tx, 
+            cancellation_token: cancellation_token.clone(),
+            last_ping: get_timestamp()
+        };
 
         let task_message_tx = message_tx.clone();
+        let ping_message_tx = message_tx.clone();
 
         match &message_tx.send(ServerMessage::ClientConnected(client)).await {
             Ok(_) => {},
             Err(_) => {
-                error!("Unable to notify the server of a new client. Quitting");
+                error!("Unable to notify the server of a new client");
                 return;
             },
         }
 
         let config = bincode_config.clone();
+
+        let ping_task = async move {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+
+            let _ = ping_message_tx.send(ServerMessage::CheckPing(addr)).await;
+        };
 
         let incoming_task = async move {
             loop {
@@ -216,7 +259,10 @@ impl Server {
 
                 let boxed_message = ServerMessage::Message(MessageFromClient { addr, message: binary_message });
 
-                task_message_tx.send(boxed_message).await.unwrap();
+                match task_message_tx.send(boxed_message).await {
+                    Err(_) => return Err(HandlerError::IoError),
+                    _ => {}
+                }
             }
         };
 
@@ -265,6 +311,7 @@ impl Server {
                     }
                 }
             },
+            _ = ping_task => {}
             _ = cancellation_token.cancelled() => {
                 error!("Connection closed by cancellation token for address {}", addr);
             }
@@ -289,23 +336,51 @@ impl Server {
 
     async fn handle_message(&mut self, client: &Client, message: &MessagePayload) -> Result<(), HandlerError> {
         return match message {
-            MessagePayload::Unknown => Err(HandlerError::UnknownMessage),
-            MessagePayload::Error(data) => { 
-                warn!("Client sent a error: {}", data); Ok(())
-            },
-            MessagePayload::Login(data) => self.handle_login(client, data).await,
-            MessagePayload::PublishMeta(data) => self.handle_publish_meta(client, data).await,
-            MessagePayload::RemoveMeta(data) => self.handle_remove_meta(client, data).await,
-            MessagePayload::_RequestMeta => Err(HandlerError::UnknownMessage),
-            MessagePayload::RequestChunk(data) => self.handle_request_chunk(client, data).await,
-            MessagePayload::TransmitChunk(data) => self.handle_transmit_chunk(client, data).await,
-            MessagePayload::StopChunk => self.handle_stop_chunk(client).await,
+            MessagePayload::Error           (data) => 
+                { warn!("Client sent a error: {}", data); Ok(())},
+                
+            MessagePayload::Ping => 
+                { self.handle_ping(client).await}
 
+            MessagePayload::Login           (data) => 
+                self.handle_login(client, data).await,
+
+            MessagePayload::PublishMeta     (data) => 
+                self.handle_publish_meta(client, data).await,
+
+            MessagePayload::RemoveMeta      (data) => 
+                self.handle_remove_meta(client, data).await,
+
+            MessagePayload::RequestChunk    (data) => 
+                self.handle_request_chunk(client, data).await,
+
+            MessagePayload::TransmitChunk   (data) => 
+                self.handle_transmit_chunk(client, data).await,
+
+            MessagePayload::StopChunk => 
+                self.handle_stop_chunk(client).await,
+
+            MessagePayload::Unknown => Err(HandlerError::UnknownMessage),
+            MessagePayload::_RequestMeta => Err(HandlerError::UnknownMessage),
             MessagePayload::NotifySenderStatus(_) => Err(HandlerError::Unsupported),
             MessagePayload::_NotifyUpdated => Err(HandlerError::UnknownMessage),
             MessagePayload::TransmitMeta(_) => Err(HandlerError::Unsupported),
             MessagePayload::LoginSuccess => Err(HandlerError::Unsupported)
         };
+    }
+
+    async fn handle_ping(&mut self, client: &Client) -> Result<(), HandlerError> {
+        Server::identified(client)?;
+
+        let new_timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
+
+        client.outgoing.send(BinaryMessage::new(MessagePayload::Ping))
+            .await
+            .map_err(|_| HandlerError::IoError)?;
+
+        self.clients.get(&client.addr).ok_or(HandlerError::ClientNotFound)?.lock().await.last_ping = new_timestamp;
+
+        Ok(())
     }
 
     async fn handle_login(&mut self, client: &Client, data: &LoginData) -> Result<(), HandlerError> {
@@ -399,7 +474,6 @@ impl Server {
 
         match self.get_by_type(&ClientType::Receiver).await {
             Ok(receiver) => {
-                //receiver.outgoing.send(BinaryMessage::new(MessagePayload::NotifyUpdated(NotifyUpdatedData { last_modified: modified } ))).await.unwrap();
                 receiver.outgoing.send(BinaryMessage::new(MessagePayload::TransmitMeta(TransmitMetaData { meta: vec![meta] } ))).await.unwrap();
             },
             _ => {}
@@ -418,19 +492,6 @@ impl Server {
 
         Ok(())
     }
-
-    /*async fn handle_request_meta(&mut self, client: &Client, data: &RequestMetaData) -> Result<(), HandlerError> {
-        Server::identified(client)?;
-
-        let entries = self.index.get_modified_after(data.after);
-
-        let meta: Vec<Meta> = entries.iter().map(|e| e.meta.clone()).collect();
-        let message = BinaryMessage::new(MessagePayload::TransmitMeta(TransmitMetaData { meta }));
-
-        client.outgoing.send(message).await.map_err(|_| HandlerError::IoError)?;
-
-        Ok(())
-    }*/
 
     async fn handle_request_chunk(&mut self, client: &Client, data: &RequestChunkData) -> Result<(), HandlerError> {
         Server::check_type(client, ClientType::Receiver)?;
@@ -464,8 +525,8 @@ impl Server {
     async fn handle_stop_chunk(&mut self, client: &Client) -> Result<(), HandlerError> {
         Server::check_type(client, ClientType::Receiver)?;
 
-        let receiver = self.get_by_type(&ClientType::Sender).await?;
-        receiver.outgoing
+        let sender = self.get_by_type(&ClientType::Sender).await?;
+        sender.outgoing
             .send(BinaryMessage::new(MessagePayload::StopChunk))
             .await.map_err(|_| HandlerError::IoError)?;
 
