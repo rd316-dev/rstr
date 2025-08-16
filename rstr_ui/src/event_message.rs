@@ -6,7 +6,6 @@ use crate::model::{DirectoryData, ReceiverFileData, SenderFileData, TransferingF
 
 pub enum EventMessage {
     ProcessMessage(BinaryMessage),
-    SendMessage(BinaryMessage),
     UploadMeta(PathBuf, String),
     UploadMultipleMeta(String, Vec<PathBuf>),
     LogInAsReceiver,
