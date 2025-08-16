@@ -1,9 +1,8 @@
 use std::{collections::HashSet, hash::Hasher, io::SeekFrom, path::PathBuf, sync::Arc, time::{Duration, SystemTime}};
 
 use bincode::config::{Fixint, LittleEndian, NoLimit};
-use bytes::Bytes;
 use lexical_sort::lexical_cmp;
-use rstr_core::{binary::serialization::DeserializationError, message::{BBytes, BinaryMessage, LoginData, LoginType, MessagePayload, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{MetaIndex, MetaIndexEntry}};
+use rstr_core::{binary::serialization::DeserializationError, message::{BinaryMessage, LoginData, LoginType, MessagePayload, RequestChunkData, TransmitChunkData, TransmitMetaData, UserStatus}, meta::{MetaIndex, MetaIndexEntry}};
 use rstr_ui::{event_message::EventMessage, model::{DirectoryData, ReceiverFileData, ReceiverFileStatusData, SenderFileData, TransferingFileData}};
 use size::Size;
 use tokio::{fs::{File, OpenOptions}, io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter}, sync::{mpsc, Mutex}};
@@ -47,24 +46,7 @@ struct RequestingFile {
     progress: f32,
     chunk_index: u32,
     current_offset: u64,
-    chunk_hash_writer: Xxh3//CoreWrapper<Sha1Core>
-}
-
-#[derive(PartialEq, Eq)]
-pub enum ReceiverState {
-    Initializing,
-    Idle,
-    //RequestedMeta,
-    ReceivingMeta,
-    RequestedChunk
-}
-
-#[derive(PartialEq, Eq)]
-pub enum SenderState {
-    Initializing,
-    Idle,
-    //SendingMeta,
-    //SendingChunk,
+    chunk_hash_writer: Xxh3
 }
 
 pub struct Receiver {
@@ -75,8 +57,6 @@ pub struct Receiver {
     state: ReceiverState,
     internal: mpsc::Sender<EventMessage>,
     transmission_tx: mpsc::Sender<BinaryMessage>,
-
-    //last_updated: i64,
 
     requesting_chunk: Option<RequestingFile>
 }
@@ -104,7 +84,6 @@ pub trait Client : Sized {
     async fn login(&mut self, username: &str, password: &str) -> Result<(), ClientHandlerError>;
     fn get_event_sender(&self) -> &mpsc::Sender<EventMessage>;
     fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage>;
-    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit>;
 
     async fn send_message(&self, payload: MessagePayload) -> Result<(), ClientHandlerError> {
         let message = BinaryMessage::new(payload);
@@ -127,7 +106,6 @@ impl Client for Receiver {
     ) -> Result<Self, NewClientError> {
         let index = MetaIndex::load(data_dir, bincode_config).await.map_err(|_| NewClientError::MetaReadError)?;
 
-        //let last_updated = index.get_last_updated();
         let receiver = Receiver {
             data_dir: data_dir.to_owned(),
             index: index,
@@ -137,7 +115,6 @@ impl Client for Receiver {
             internal: internal,
             transmission_tx: transmission_tx,
 
-            //last_updated: last_updated,
             requesting_chunk: None
         };
 
@@ -156,10 +133,6 @@ impl Client for Receiver {
 
     fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage> {
         &self.transmission_tx
-    }
-
-    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
-        &self.bincode_config
     }
 }
 
@@ -199,26 +172,9 @@ impl Client for Sender {
     fn get_transmission_sender(&self) -> &mpsc::Sender<BinaryMessage> {
         &self.transmission_tx
     }
-
-    fn get_bincode_config(&self) -> &bincode::config::Configuration<LittleEndian, Fixint, NoLimit> {
-        &self.bincode_config
-    }
 }
 
 impl Receiver {
-    /*pub async fn request_new_meta(&mut self) -> Result<(), ClientHandlerError> {
-        self.request_meta(self.index.get_last_updated()).await
-    }*/
-
-    /*pub async fn request_meta(&mut self, after: i64) -> Result<(), ClientHandlerError> {
-        self.check_state(ReceiverState::Idle).map_err(|_| ClientHandlerError::WrongState)?;
-
-        let data = RequestMetaData {
-            after: after
-        };
-
-        self.send_message(MessagePayload::RequestMeta(data)).await
-    }*/
 
     pub async fn request_file(&mut self, remote_path: &str, local_path: &PathBuf) -> Result<(), ClientHandlerError> {
         self.check_state(ReceiverState::Idle)?;
@@ -292,10 +248,6 @@ impl Receiver {
 
     pub async fn process_message(&mut self, message: &BinaryMessage) -> Result<(), ClientHandlerError> {
         match message.payload() {
-            /*MessagePayload::NotifyUpdated(data) => {
-                self.check_states(&[ReceiverState::Idle, ReceiverState::Initializing])?;
-                self.process_notify_updated(&data).await?;
-            },*/
             MessagePayload::TransmitMeta(data) => {
                 self.check_state(ReceiverState::Idle)?;
                 self.process_transmit_meta(&data).await?;
@@ -318,19 +270,12 @@ impl Receiver {
                     UserStatus::Disconnected => self.send_event(EventMessage::SenderDisconnected).await,
                 }?
             }
+            MessagePayload::Ping => {},
             _ => { return Err(ClientHandlerError::NotSupported); },
         }
 
         Ok(())
     }
-
-    /*async fn process_notify_updated(&mut self, data: &NotifyUpdatedData) -> Result<(), ClientHandlerError> {
-        if data.last_modified > self.last_updated {
-            self.request_meta(self.last_updated).await?;
-        }
-
-        Ok(())
-    }*/
 
     async fn process_transmit_meta(&mut self, data: &TransmitMetaData) -> Result<(), ClientHandlerError> {
         self.state = ReceiverState::ReceivingMeta;
@@ -709,6 +654,7 @@ impl Sender {
                 let (dirs, files) = self.convert_index();
                 self.send_event(EventMessage::LoggedInAsSender(dirs, files)).await.unwrap();
             },
+            MessagePayload::Ping => {},
             _ => {
                 return Err(ClientHandlerError::NotSupported)
             }
@@ -842,13 +788,5 @@ impl Sender {
 
         filtered.join("/")
     }
-
-    /*fn check_state(&self, state: SenderState) -> Result<(), ClientHandlerError> {
-        if self.state == state {
-            Ok(())
-        } else {
-            Err(ClientHandlerError::WrongState)
-        }
-    }*/
 
 }
