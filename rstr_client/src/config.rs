@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs::{File, OpenOptions}, io::{BufRead, BufReader, Read}, path::{self, PathBuf}};
+use std::{fs::File, io::{BufRead, BufReader}, path::{self, PathBuf}};
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {

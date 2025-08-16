@@ -1,18 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod client;
+mod receiver;
+mod sender;
 mod config;
 
-use std::{env, error::Error, path::PathBuf, time::Duration};
+use std::{error::Error, path::PathBuf, time::Duration};
 
+use bincode::config::{Configuration, Fixint, LittleEndian, NoLimit};
 use bytes::{Bytes};
-use futures::{stream::FusedStream, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use rstr_core::message::{BinaryMessage, MessagePayload};
 use rstr_ui::{event_message::EventMessage, gui::{ConnectionStatus, GuiContext, ProcessingEvent}, model::MetaFileData};
 use size::Size;
 use tokio::{fs::File, sync::mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::{self, Message}};
 
-use crate::{client::{Client, ClientHandlerError, Receiver, Sender}, config::ClientConfig};
+use crate::{client::{Client, ClientHandlerError}, config::ClientConfig, receiver::Receiver, sender::Sender};
 
 #[derive(Debug)]
 enum HandlerError {
@@ -80,11 +83,9 @@ async fn logic(
             read_event_tx.send(EventMessage::ProcessMessage(binary_message)).await
                 .map_err(|_| HandlerError::ConnectionInterrupted)?;
         }
-
-        Ok::<(), HandlerError>(())
     };
 
-    let write_task = tokio::spawn (async move {
+    let write_task = async move {
         loop {
             let message = transmission_rx.recv().await
                 .ok_or(HandlerError::ConnectionInterrupted)?;
@@ -95,9 +96,7 @@ async fn logic(
             write.send(Message::binary(Bytes::from(encoded))).await
                 .map_err(|error| HandlerError::TungsteniteError(error))?;
         }
-
-        Ok::<(), HandlerError>(())
-    });
+    };
 
     let ping_tx = transmission_tx.clone();
     let ping_task = async move {
@@ -109,20 +108,24 @@ async fn logic(
 
     let event_processing_tx = processing_tx.clone();
     let event_processor_task = async move {
-        handle_events(event_client_config, transmission_tx, event_processing_tx, event_tx, event_rx);
+        handle_events(event_client_config, transmission_tx, event_processing_tx, event_tx, event_rx, &config);
     };
 
+    let read_handle: tokio::task::JoinHandle<Result<(), HandlerError>> = tokio::spawn(read_task);
+    let write_handle: tokio::task::JoinHandle<Result<(), HandlerError>> = tokio::spawn(write_task);
+
+
     tokio::select! {
-        rt = read_task => {
-            match rt {
+        rh = read_handle => {
+            match rh {
                 Err(err) => println!("Error occurred in read task: {:?}", err),
                 _ => {
                     println!("Read task is cancelled")
                 }
             }
         },
-        wt = write_task => {
-            match wt {
+        wh = write_handle => {
+            match wh {
                 Err(err) => println!("Error occurred in writing task: {:?}", err),
                 _ => {
                     println!("Writing task in cancelled")
@@ -153,6 +156,7 @@ async fn handle_events(
     processing_tx: mpsc::Sender<ProcessingEvent>,
     event_tx: mpsc::Sender<EventMessage>, 
     mut event_rx: mpsc::Receiver<EventMessage>,
+    config: &Configuration<LittleEndian, Fixint, NoLimit>
 ) {
     let receiver_username = client_config.receiver_username;
     let receiver_password = client_config.receiver_password;
@@ -176,7 +180,7 @@ async fn handle_events(
                     &PathBuf::from("receiver"), 
                     event_tx.clone(), 
                     transmission_tx.clone(), 
-                    &config
+                    config
                 ).await.unwrap();
 
                 match receiver.login(&receiver_username, &receiver_password).await {
@@ -196,7 +200,7 @@ async fn handle_events(
                     &PathBuf::from("sender"),
                     event_tx.clone(), 
                     transmission_tx.clone(), 
-                    &config
+                    config
                 ).await.unwrap();
 
                 match sender.login(&sender_username, &sender_password).await {
@@ -263,7 +267,7 @@ async fn handle_events(
                             ProcessingEvent::MetadataCreationStarted(MetaFileData { name: file_name, formatted_size: formatted_size })
                         ).await.unwrap();
 
-                        sender.create_meta(&local_path, &remote_path).await;
+                        sender.create_meta(&local_path, &remote_path).await.unwrap();
                     },
                     _ => {}
                 };
@@ -299,7 +303,7 @@ async fn handle_events(
                             ProcessingEvent::MultipleMetadataCreationStarted(meta_files)
                         ).await.unwrap();
 
-                        sender.create_multiple_meta(&local_paths, &remote_dir).await;
+                        sender.create_multiple_meta(&local_paths, &remote_dir).await.unwrap();
                     },
                     _ => {}
                 };
