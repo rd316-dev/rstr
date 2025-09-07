@@ -1,121 +1,188 @@
-use std::{collections::HashMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, ops::DerefMut, path::PathBuf, str::FromStr, vec};
 
 use rstr_core::meta::Meta;
 use tokio::sync::mpsc;
 use windows_projfs::{DirectoryEntry, DirectoryInfo, FileInfo, ProjectedFileSystemSource};
 
-pub struct DirNode {
-    info: DirectoryInfo,
-    files: Vec<FileInfo>,
-    dirs: Vec<DirectoryInfo>
+pub enum RemoteEntry {
+    Directory(RemoteDirectory),
+    File(RemoteFile)
 }
 
-pub fn create_dir_map(meta_entries: &[Meta]) -> HashMap<String, DirNode> {
-    let mut map: HashMap<String, DirNode> = HashMap::new();
+pub struct RemoteDirectory {
+    pub name: String,
+    pub info: DirectoryInfo,
+    pub children: Vec<RemoteEntry>
+}
 
-    {
-        let root_info = DirectoryInfo {
-            directory_name: "".to_owned(),
-            
-            .. Default::default()
-        };
+pub struct RemoteFile {
+    pub name: String,
+    pub info: FileInfo,
+    pub meta: Meta
+}
 
-        let root = DirNode { info: root_info, files: vec![], dirs: vec![] };
-        map.insert("".to_owned(), root);
+impl RemoteEntry {
+    fn name(&self) -> &str {
+        match self {
+            RemoteEntry::Directory(remote_directory) => &remote_directory.name,
+            RemoteEntry::File(remote_file) => &remote_file.name,
+        }
     }
 
-    for e in meta_entries {
-        let mut parts: Vec<&str> = e.path.split("/").collect();
-        let file_name = parts.remove(parts.len() - 1).to_owned();
+    fn info(&self) -> DirectoryEntry {
+        match self {
+            RemoteEntry::Directory(dir) => DirectoryEntry::Directory(dir.info.clone()),
+            RemoteEntry::File(file) => DirectoryEntry::File(file.info.clone()),
+        }
+    }
 
-        {
-            let parts = parts.clone();
+    fn new_dir(name: &str) -> Self {
+        RemoteEntry::Directory( RemoteDirectory {
+            name: name.to_owned(), 
+            info: DirectoryInfo { directory_name: name.to_owned(), ..Default::default() }, 
+            children: vec![]
+        })
+    }
 
-            let mut root_path = "".to_owned();
-            for dir_name in parts {
-                let current_path = root_path.clone() + (if root_path.len() == 1 { "" } else { "/"} ) + dir_name;
-                match map.get(&current_path) {
-                    Some(_) => continue,
-                    _ => {}
+    fn new_file(name: &str, meta: &Meta) -> Self {
+        RemoteEntry::File( RemoteFile { 
+            name: name.to_owned(), 
+            info: FileInfo {
+                file_name: name.to_owned(), 
+                file_size: meta.size, 
+                file_attributes: 1, 
+                creation_time: meta.file_modified as u64, 
+                
+                ..Default::default()
+            },
+            meta: meta.clone()
+        })
+    }
+
+    fn find_child<'a>(&'a self, name: &str) -> Option<&'a Self> {
+        match self {
+            RemoteEntry::File(_) => None,
+            RemoteEntry::Directory(remote_directory) => {
+                remote_directory.children.iter().find(|c| c.name() == name)
+            },
+        }
+    }
+
+    fn find_child_mut<'a>(&'a mut self, name: &str) -> Option<&'a mut Self> {
+        match self {
+            RemoteEntry::File(_) => None,
+            RemoteEntry::Directory(remote_directory) => {
+                remote_directory.children.iter_mut().find(|c| c.name() == name)
+            },
+        }
+    }
+
+    fn traverse<'a>(&'a self, path: &str) -> Option<&'a Self> {
+        let parts: Vec<&str> = path.split("/").collect();
+
+        let mut current = self;
+        for i in 0..parts.len() {
+            let name = parts[i];
+
+            current = current.find_child(name)?;
+        }
+
+        Some(current)
+    }
+
+    fn traverse_mut<'a>(&'a mut self, path: &str) -> Option<&'a mut Self> {
+        let parts: Vec<&str> = path.split("/").collect();
+
+        let mut current = self;
+        for i in 0..parts.len() {
+            let name = parts[i];
+
+            current = current.find_child_mut(name)?;
+        }
+
+        Some(current)
+    }
+
+    fn add<'a>(&'a mut self, new_entry: RemoteEntry) -> Option<&'a mut Self> {
+        match self {
+            RemoteEntry::Directory(remote_directory) => {
+                remote_directory.children.push(new_entry);
+                remote_directory.children.last_mut()
+            },
+            RemoteEntry::File(_) => None,
+        }
+    }
+
+    fn get_or_add<'a, F>(&'a mut self, name: &str, entry_creator: F) -> Option<&'a mut Self> 
+    where F: FnOnce() -> RemoteEntry {
+        match self {
+            RemoteEntry::File(_) => None,
+            RemoteEntry::Directory(remote_directory) => {
+                for i in 0..remote_directory.children.len() {
+                    let entry = &remote_directory.children[i];
+                    if entry.name() == name {
+                        return Some(remote_directory.children.get_mut(i).unwrap())
+                    }
                 }
 
-                let dir_info = DirectoryInfo {
-                    directory_name: dir_name.to_owned(),
+                let new_entry = entry_creator();
 
-                    .. Default::default()
-                };
-
-                let root_node: &mut DirNode = map.get_mut(&root_path).unwrap();
-                root_node.dirs.push(dir_info.clone());
-
-                let node = DirNode {
-                    info: dir_info,
-                    files: vec![],
-                    dirs: vec![]
-                };
-
-                map.insert(current_path.clone(), node);
-
-                root_path = current_path;
-            }
-        }
-
-        let dir_name = parts.last().unwrap().to_owned();
-
-        let path = parts.join("/");
-
-        let file_info = FileInfo {
-            file_name: file_name,
-            file_size: e.size,
-            file_attributes: 0,
-            creation_time: e.file_modified as u64,
-            last_access_time: e.file_modified as u64,
-            last_write_time: e.file_modified as u64,
-        };
-
-        match map.get_mut(&path) {
-            Some(entry) => {
-                entry.files.push(file_info);
+                remote_directory.children.push(new_entry);
+                remote_directory.children.last_mut()
             },
-            None => { // this branch is pretty much useless
-                let dir_info = DirectoryInfo {
-                    directory_name: dir_name.to_owned(),
-
-                    .. Default::default()
-                };
-
-                let node = DirNode {
-                    info: dir_info,
-                    files: vec![file_info],
-                    dirs: vec![]
-                };
-
-                map.insert(path, node);
-            }
         }
     }
 
-    return map;
+    fn add_at_path<'a>(&'a mut self, path: &str, new_entry: RemoteEntry) -> Option<&'a mut Self> {
+        let parts: Vec<&str> = path.split("/").collect();
+
+        let mut current = self;
+        for i in 0..parts.len() {
+            let name = parts[i];
+
+            current = current.get_or_add(name, || RemoteEntry::new_dir(name) )?;
+        }
+
+        current.add(new_entry);
+
+        None
+    }
 }
 
-/*struct RemoteFileSystem {
-    //file_paths: Vec<String>,
-    root_node: DirNode,
-    dir_map: HashMap<String, DirNode>
-    //tx: mpsc::Sender<EventMessage>
+struct RemoteFileSystem {
+    tree: RemoteEntry
 }
 
 impl RemoteFileSystem {
-    fn set_file_paths(paths: &[&str]) {
-        
+    pub fn create_from_entries(meta_entries: &[Meta]) -> Self {
+        let mut root = RemoteEntry::new_dir("");
+
+        for meta in meta_entries {
+            let mut parts: Vec<&str> = meta.path.split("/").collect();
+            let file_name = parts.remove(parts.len() - 1);
+
+            let file = RemoteEntry::new_file(file_name, meta);
+
+            let dir_path = parts.join("/");
+            root.add_at_path(&dir_path, file);
+        }
+
+        RemoteFileSystem { tree: root }
     }
 }
 
 impl ProjectedFileSystemSource for RemoteFileSystem {
     fn list_directory(&self, path: &std::path::Path) -> Vec<windows_projfs::DirectoryEntry> {
-        path.to_str();
+        let absolute_path = &std::path::absolute(path).unwrap().to_str().unwrap().to_owned();
+        println!("Requested listing of '{}'", absolute_path);
 
-        vec![]
+        match self.tree.traverse(&absolute_path) {
+            Some(RemoteEntry::Directory(dir)) => {
+                dir.children.iter().map(|d| d.info()).collect::<Vec<DirectoryEntry>>()
+            }
+            Some(RemoteEntry::File(_)) => vec![],
+            None => vec![]
+        }
     }
 
     fn stream_file_content(
@@ -124,6 +191,7 @@ impl ProjectedFileSystemSource for RemoteFileSystem {
         byte_offset: usize,
         length: usize,
     ) -> std::io::Result<Box<dyn std::io::Read>> {
-        
+        Err(std::path::absolute(path).unwrap_err())
+        //println!("Requested content of '{}'", absolute_path);
     }
-}*/
+}
